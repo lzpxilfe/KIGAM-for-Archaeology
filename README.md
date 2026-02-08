@@ -30,12 +30,12 @@
 If you find this repository useful, please consider giving it a star ⭐ and citing it in your work:
 
 ```bibtex
-@software{ArchDistribution2026,
+@software{KIGAMForArchaeology2026,
   author = {lzpxilfe},
-  title = {ArchDistribution: Automated QGIS plugin for archaeological distribution maps},
+  title = {KIGAM for Archaeology: Automated QGIS plugin for archaeological distribution maps},
   year = {2026},
-  url = {https://github.com/lzpxilfe/ArchDistribution},
-  version = {1.0.0}
+  url = {https://github.com/lzpxilfe/KIGAM-for-Archaeology},
+  version = {0.1.0}
 }
 ```
 
