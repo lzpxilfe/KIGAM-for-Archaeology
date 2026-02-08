@@ -2,12 +2,13 @@
 
 
 
-from qgis.PyQt.QtCore import QSettings, QTranslator, qVersion, QCoreApplication
+
+from qgis.PyQt.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QUrl
 from qgis.PyQt.QtWidgets import (
     QAction, QMessageBox, QFileDialog, QDialog, QVBoxLayout, 
     QHBoxLayout, QLabel, QFontComboBox, QSpinBox, QDialogButtonBox
 )
-from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtGui import QIcon, QDesktopServices
 from qgis.core import QgsProject
 
 import os.path
@@ -62,22 +63,33 @@ class KigamGeoDownloader:
         self.action = QAction(QIcon(icon_path), "Load KIGAM ZIP", self.iface.mainWindow())
         self.action.triggered.connect(self.run)
         
+        # Help/Download Action
+        self.help_action = QAction(QIcon(os.path.join(self.plugin_dir, 'icon.png')), "Download KIGAM Data", self.iface.mainWindow()) # Reusing icon for now or can use standard QGIS icon
+        self.help_action.triggered.connect(self.open_kigam_website)
+        
         # Add to Menu
         self.iface.addPluginToMenu("&KIGAM for Archaeology", self.action)
+        self.iface.addPluginToMenu("&KIGAM for Archaeology", self.help_action)
         
         # Add to Dedicated Toolbar
         self.toolbar = self.iface.addToolBar("KIGAM for Archaeology")
         self.toolbar.setObjectName("KIGAMForArchaeology")
         self.toolbar.addAction(self.action)
+        self.toolbar.addAction(self.help_action)
 
     def unload(self):
         # Remove Menu
         self.iface.removePluginMenu("&KIGAM for Archaeology", self.action)
+        self.iface.removePluginMenu("&KIGAM for Archaeology", self.help_action)
         
         # Remove Toolbar
         del self.toolbar
         
         del self.action
+        del self.help_action
+
+    def open_kigam_website(self):
+        QDesktopServices.openUrl(QUrl("https://data.kigam.re.kr/search?subject=Geology"))
 
     def run(self):
         zip_path, _ = QFileDialog.getOpenFileName(
