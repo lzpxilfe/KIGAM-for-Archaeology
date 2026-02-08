@@ -1,0 +1,15 @@
+[General]
+name=KIGAM for Archaeology
+qgisMinimumVersion=3.0
+description=Download and style KIGAM 1:50,000 geological maps for archaeological use.
+version=0.1
+author=Your Name
+email=your.email@example.com
+about=This plugin retrieves 1:50,000 geological map data from KIGAM WFS and applies archaeological classification styles.
+tracker=https://github.com/lzpxilfe/KIGAM-for-Archaeology/issues
+repository=https://github.com/lzpxilfe/KIGAM-for-Archaeology
+icon=icon.png
+tags=geology, archaeology, kigam, wfs
+category=Plugins
+type=plugins
+experimental=True

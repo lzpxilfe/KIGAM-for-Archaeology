@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# QGIS Plugin
+.qgis2/
+.qgis3/
+.idea/
+.vscode/
+
+# Project specific
+*.zip
+*.ZIP
+*.dbf
+*.DBF
+*.shp
+*.SHP
+*.shx
+*.SHX
+*.prj
+*.PRJ
+*.qgz
+*.QGZ
+temp_extract_*/
+temp_extract_gpd/
+temp_extract/
+sym/
