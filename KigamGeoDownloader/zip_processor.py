@@ -25,7 +25,7 @@ class ZipProcessor:
         if not os.path.exists(self.extract_root):
             os.makedirs(self.extract_root)
 
-    def process_zip(self, zip_path):
+    def process_zip(self, zip_path, font_family="Malgun Gothic", font_size=10):
         """
         Extracts ZIP, loads shapefiles, and applies styling.
         """
@@ -76,6 +76,13 @@ class ZipProcessor:
                     # Apply Styling if sym path exists
                     if sym_path:
                         self.apply_sym_styling(layer, sym_path)
+                    
+                    # Apply Labeling for Litho layers
+                    if 'Litho' in layer_name:
+                         self.apply_labeling(layer, font_family, font_size)
+
+        # Reorder and Organize
+        self.organize_layers(loaded_layers)
 
         return loaded_layers
 
@@ -173,3 +180,98 @@ class ZipProcessor:
             renderer = QgsCategorizedSymbolRenderer(best_field, categories)
             layer.setRenderer(renderer)
             layer.triggerRepaint()
+
+    def apply_labeling(self, layer, font_family, font_size):
+        from qgis.core import (
+            QgsVectorLayerSimpleLabeling, QgsPalLayerSettings, 
+            QgsTextFormat, QgsTextBufferSettings
+        )
+        from qgis.PyQt.QtGui import QColor, QFont
+
+        settings = QgsPalLayerSettings()
+        
+        # Determine Label Field (LITHOIDX is usually preferred)
+        fields = [f.name() for f in layer.fields()]
+        label_field = 'LITHOIDX' if 'LITHOIDX' in fields else 'LITHONAME' if 'LITHONAME' in fields else fields[0]
+        settings.fieldName = label_field
+        
+        # Text Format
+        text_format = QgsTextFormat()
+        text_format.setFont(QFont(font_family))
+        text_format.setSize(font_size)
+        text_format.setColor(QColor("black"))
+        
+        # Buffer (Halo) to make it readable against patterns
+        buffer_settings = QgsTextBufferSettings()
+        buffer_settings.setEnabled(True)
+        buffer_settings.setSize(1)
+        buffer_settings.setColor(QColor("white"))
+        text_format.setBuffer(buffer_settings)
+        
+        settings.setFormat(text_format)
+
+        # Placement: Horizontal (0), Free (1), etc.
+        # For Polygons, we want "Over Point" or "Horizontal"
+        settings.placement = QgsPalLayerSettings.Horizontal
+        
+        # Smart Placement Logic
+        settings.centroidInside = True # Force label inside
+        settings.fitInPolygonOnly = True # Don't draw if it doesn't fit
+        settings.priority = 5 # Medium priority
+        
+        layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
+        layer.setLabelsEnabled(True)
+
+    def organize_layers(self, layers):
+        """
+        Organize layers in TOC:
+        1. Points (Top)
+        2. Lines (Middle)
+        3. Polygons (Bottom)
+        4. Reference/Frame (Very Bottom, Hidden)
+        """
+        root = QgsProject.instance().layerTreeRoot()
+        
+        # Separate layers by type/role
+        points = []
+        lines = []
+        polygons = []
+        reference = [] # Frame, Crosssectionline
+
+        for layer in layers:
+            name = layer.name().lower()
+            if 'frame' in name or 'crosssectionline' in name:
+                reference.append(layer)
+                # Hide these layers
+                node = root.findLayer(layer.id())
+                if node:
+                    node.setItemVisibilityChecked(False)
+            elif layer.geometryType() == 0: # Point
+                points.append(layer)
+            elif layer.geometryType() == 1: # Line
+                lines.append(layer)
+            else: # Polygon
+                polygons.append(layer)
+
+        # Helper to move layer to top of keys list
+        # We interact with standard QGIS Layer Tree
+        # The logic here is a bit tricky via API without knowing current state,
+        # but typically we just re-add in order or move existing nodes.
+        # Since we just added them, they are likely at the top. 
+        # We will iterate and move nodes to index 0 in reverse desired order.
+        
+        # Desired Order (Bottom to Top):
+        # Reference -> Polygons -> Lines -> Points
+        
+        all_ordered = reference + polygons + lines + points
+        
+        for layer in all_ordered:
+            node = root.findLayer(layer.id())
+            if node:
+                # Move to top (index 0)
+                # By moving Reference first, then Polygons, then Lines, then Points,
+                # Points will end up at Index 0 (Top), Lines at Index 1, etc.
+                clone = node.clone()
+                parent = node.parent()
+                parent.insertChildNode(0, clone)
+                parent.removeChildNode(node)

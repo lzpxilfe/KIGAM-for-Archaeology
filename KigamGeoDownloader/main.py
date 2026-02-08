@@ -1,13 +1,56 @@
 # -*- coding: utf-8 -*-
 
 
+
 from qgis.PyQt.QtCore import QSettings, QTranslator, qVersion, QCoreApplication
-from qgis.PyQt.QtWidgets import QAction, QMessageBox, QFileDialog
+from qgis.PyQt.QtWidgets import (
+    QAction, QMessageBox, QFileDialog, QDialog, QVBoxLayout, 
+    QHBoxLayout, QLabel, QFontComboBox, QSpinBox, QDialogButtonBox
+)
 from qgis.PyQt.QtGui import QIcon
 from qgis.core import QgsProject
 
 import os.path
 from .zip_processor import ZipProcessor
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("KIGAM Load Settings")
+        self.resize(300, 150)
+        
+        layout = QVBoxLayout()
+        
+        # Font Family
+        font_layout = QHBoxLayout()
+        font_layout.addWidget(QLabel("Font Family:"))
+        self.font_combo = QFontComboBox()
+        # Set default to something common if possible, or let it be system default
+        font_layout.addWidget(self.font_combo)
+        layout.addLayout(font_layout)
+        
+        # Font Size
+        size_layout = QHBoxLayout()
+        size_layout.addWidget(QLabel("Font Size:"))
+        self.size_spin = QSpinBox()
+        self.size_spin.setRange(5, 50)
+        self.size_spin.setValue(10)
+        size_layout.addWidget(self.size_spin)
+        layout.addLayout(size_layout)
+        
+        # Dialog Buttons
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+        
+        self.setLayout(layout)
+
+    def get_settings(self):
+        return {
+            'font_family': self.font_combo.currentFont().family(),
+            'font_size': self.size_spin.value()
+        }
 
 class KigamGeoDownloader:
     def __init__(self, iface):
@@ -47,16 +90,35 @@ class KigamGeoDownloader:
         if not zip_path:
             return
 
+        # Show Settings Dialog
+        dialog = SettingsDialog(self.iface.mainWindow())
+        if dialog.exec_() != QDialog.Accepted:
+            return
+            
+        settings = dialog.get_settings()
+
         processor = ZipProcessor()
-        loaded_layers = processor.process_zip(zip_path)
+        # Pass settings to processor
+        loaded_layers = processor.process_zip(
+            zip_path, 
+            font_family=settings['font_family'], 
+            font_size=settings['font_size']
+        )
         
         if loaded_layers:
             QMessageBox.information(self.iface.mainWindow(), "Success", f"Loaded {len(loaded_layers)} layers from ZIP.")
-            # Zoom to the first layer
-            if loaded_layers[0].isValid():
+            # Zoom to the first layer (usually the most relevant one if sorted, or just the first)
+            # Since we reorder, let's find the 'Litho' layer or just use the extent of the set
+            
+            # Find Litho layer to zoom to as it is the main map
+            litho_layer = next((l for l in loaded_layers if 'Litho' in l.name()), None)
+            target_layer = litho_layer if litho_layer else loaded_layers[0]
+            
+            if target_layer.isValid():
                 canvas = self.iface.mapCanvas()
-                canvas.setExtent(loaded_layers[0].extent())
+                canvas.setExtent(target_layer.extent())
                 canvas.refresh()
         else:
             QMessageBox.warning(self.iface.mainWindow(), "Warning", "No layers were loaded. Check the log for details.")
+
 
