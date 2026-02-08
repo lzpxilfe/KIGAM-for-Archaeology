@@ -70,10 +70,19 @@ CU_POINTS = [
     LegendPoint(2104.0, (115, 12, 12)),
 ]
 
+ZN_POINTS = [LegendPoint(v, p.rgb) for v, p in zip([0.0, 45.0, 57.0, 66.0, 79.0, 107.0, 149.0, 212.0, 272.0, 542.0, 21100.0], CU_POINTS)]
+SR_POINTS = [LegendPoint(v, p.rgb) for v, p in zip([0.0, 57.0, 72.0, 83.0, 99.0, 135.0, 192.0, 275.0, 342.0, 496.0, 3645.0], CU_POINTS)]
+BA_POINTS = [LegendPoint(v, p.rgb) for v, p in zip([0.0, 734.0, 853.0, 935.0, 1050.0, 1268.0, 1507.0, 1752.0, 1920.0, 2362.0, 15840.0], CU_POINTS)]
+CAO_POINTS = [LegendPoint(v, p.rgb) for v, p in zip([0.0, 0.40, 0.50, 0.58, 0.73, 1.18, 1.90, 2.99, 4.05, 9.03, 53.07], CU_POINTS)]
+
 PRESETS: Dict[str, GeoChemPreset] = {
     "fe2o3": GeoChemPreset(key="fe2o3", label="Fe2O3 (산화철)", unit="%", points=FE2O3_POINTS),
     "pb": GeoChemPreset(key="pb", label="Pb (납)", unit="ppm", points=PB_POINTS),
     "cu": GeoChemPreset(key="cu", label="Cu (구리)", unit="ppm", points=CU_POINTS),
+    "zn": GeoChemPreset(key="zn", label="Zn (아연)", unit="ppm", points=ZN_POINTS),
+    "sr": GeoChemPreset(key="sr", label="Sr (스트론튬)", unit="ppm", points=SR_POINTS),
+    "ba": GeoChemPreset(key="ba", label="Ba (바륨)", unit="ppm", points=BA_POINTS),
+    "cao": GeoChemPreset(key="cao", label="CaO (칼슘)", unit="%", points=CAO_POINTS),
 }
 
 def interp_rgb_to_value(

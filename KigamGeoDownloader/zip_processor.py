@@ -64,7 +64,8 @@ class ZipProcessor:
                     layer_name = os.path.splitext(file)[0]
                     
                     # Force cp949 encoding for Korean support
-                    layer = QgsVectorLayer(f"{shp_path}|layername={layer_name}", layer_name, "ogr")
+                    # Simplified path (omit layername as it's often redundant or causing OGR issues if wrong)
+                    layer = QgsVectorLayer(shp_path, layer_name, "ogr")
                     layer.setProviderEncoding("cp949")
                     
                     if not layer.isValid():
@@ -128,7 +129,7 @@ class ZipProcessor:
                 best_field = field_name
 
         if not best_field:
-            QgsMessageLog.logMessage(f"No matching field found for styling in layer {layer.name()}", "KIGAM Plugin", Qgis.Info)
+            QgsMessageLog.logMessage(f"No matching field found for styling in layer {layer.name()}. Available fields: {', '.join(all_fields)}", "KIGAM Plugin", Qgis.Info)
             return
 
         QgsMessageLog.logMessage(f"Applying style to {layer.name()} using field '{best_field}' ({max_matches} matches)", "KIGAM Plugin", Qgis.Success)
@@ -283,3 +284,6 @@ class ZipProcessor:
                     # But wait, clone is the new node? No, clone is a QgsLayerTreeLayer object.
                     # QgsLayerTreeNode.setItemVisibilityChecked(False)
                     clone.setItemVisibilityChecked(False)
+                
+                # Expand group
+                group.setExpanded(True)
