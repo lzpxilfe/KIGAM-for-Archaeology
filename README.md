@@ -8,7 +8,7 @@
 -   **Auto-Encoding**: Automatically handles `cp949` encoding for Korean attribute text.
 -   **Dynamic Styling**: Applies symbols automatically by matching shapefile attributes with the `sym` folder contents.
 -   **Smart Labeling**: Automatically labels geological layers (Litho) with optimal placement settings.
--   **Help & Download**: Built-in link to KIGAM's data download portal for easy access.
+-   **Unified Workflow**: A single "KIGAM Tools" dialog handles both data download links and map loading.
 
 ## Installation
 
@@ -19,11 +19,13 @@
 
 ## Usage
 
-1.  (Optional) Click **"Download KIGAM Data"** in the menu to visit the KIGAM website and download a geological map ZIP.
-2.  Click the **"Load KIGAM ZIP"** icon in the "KIGAM for Archaeology" toolbar.
-2.  Select a KIGAM Geological Map ZIP file (e.g., `수치지질도_5만축척_GF03_광정.zip`).
-3.  In the settings dialog, choose your preferred **Font Family** and **Size** for labels.
-4.  The plugin will process the file, load layers, apply styles, and organize the Table of Contents.
+1.  Click the **"KIGAM Tools"** icon in the toolbar.
+2.  **Download Data**: Click "Open KIGAM Download Page" if you need to download a map.
+3.  **Load Map**:
+    -   Select your downloaded ZIP file.
+    -   Choose your preferred Font Family and Size.
+    -   Click **"Load Map"**.
+4.  The plugin will extract, load, style, and organize the layers. The map will automatically zoom to the correct area.
 
 ## 🌟 Citation & Star
 
