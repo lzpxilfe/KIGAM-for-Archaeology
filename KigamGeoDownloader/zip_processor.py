@@ -29,7 +29,8 @@ class ZipProcessor:
         """
         Extracts ZIP, loads shapefiles, and applies styling.
         """
-        extract_dir = os.path.join(self.extract_root, os.path.splitext(os.path.basename(zip_path))[0])
+        zip_basename = os.path.splitext(os.path.basename(zip_path))[0]
+        extract_dir = os.path.join(self.extract_root, zip_basename)
         
         # Clean up previous extraction if exists
         if os.path.exists(extract_dir):
@@ -81,8 +82,9 @@ class ZipProcessor:
                     if 'Litho' in layer_name:
                          self.apply_labeling(layer, font_family, font_size)
 
-        # Reorder and Organize
-        self.organize_layers(loaded_layers)
+        # Reorder and Organize into Group
+        # Use simple heuristics to guess a region name if possible, or just use ZIP name
+        self.organize_layers(loaded_layers, zip_basename)
 
         return loaded_layers
 
@@ -201,12 +203,10 @@ class ZipProcessor:
         text_format.setSize(font_size)
         text_format.setColor(QColor("black"))
         
-        # Buffer (Halo) to make it readable against patterns
-        buffer_settings = QgsTextBufferSettings()
-        buffer_settings.setEnabled(True)
-        buffer_settings.setSize(1)
-        buffer_settings.setColor(QColor("white"))
-        text_format.setBuffer(buffer_settings)
+        # Buffer REMOVED as per request
+        # buffer_settings = QgsTextBufferSettings()
+        # buffer_settings.setEnabled(True)
+        # ...
         
         settings.setFormat(text_format)
 
@@ -222,16 +222,20 @@ class ZipProcessor:
         layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
         layer.setLabelsEnabled(True)
 
-    def organize_layers(self, layers):
+    def organize_layers(self, layers, group_name="KIGAM Map"):
         """
         Organize layers in TOC:
-        1. Points (Top)
-        2. Lines (Middle)
-        3. Polygons (Bottom)
-        4. Reference/Frame (Very Bottom, Hidden)
+        1. Create Group 'group_name'
+        2. Points (Top)
+        3. Lines (Middle)
+        4. Polygons (Bottom)
+        5. Reference/Frame (Very Bottom, Hidden)
         """
         root = QgsProject.instance().layerTreeRoot()
         
+        # Create Group
+        group = root.addGroup(group_name)
+
         # Separate layers by type/role
         points = []
         lines = []
@@ -242,10 +246,6 @@ class ZipProcessor:
             name = layer.name().lower()
             if 'frame' in name or 'crosssectionline' in name:
                 reference.append(layer)
-                # Hide these layers
-                node = root.findLayer(layer.id())
-                if node:
-                    node.setItemVisibilityChecked(False)
             elif layer.geometryType() == 0: # Point
                 points.append(layer)
             elif layer.geometryType() == 1: # Line
@@ -253,25 +253,33 @@ class ZipProcessor:
             else: # Polygon
                 polygons.append(layer)
 
-        # Helper to move layer to top of keys list
-        # We interact with standard QGIS Layer Tree
-        # The logic here is a bit tricky via API without knowing current state,
-        # but typically we just re-add in order or move existing nodes.
-        # Since we just added them, they are likely at the top. 
-        # We will iterate and move nodes to index 0 in reverse desired order.
-        
-        # Desired Order (Bottom to Top):
+        # Desired Order in Group (Bottom to Top):
         # Reference -> Polygons -> Lines -> Points
-        
         all_ordered = reference + polygons + lines + points
         
         for layer in all_ordered:
             node = root.findLayer(layer.id())
             if node:
-                # Move to top (index 0)
-                # By moving Reference first, then Polygons, then Lines, then Points,
-                # Points will end up at Index 0 (Top), Lines at Index 1, etc.
+                # Move into group
                 clone = node.clone()
-                parent = node.parent()
-                parent.insertChildNode(0, clone)
-                parent.removeChildNode(node)
+                # Insert at top of group (index 0) so reversed order works?
+                # No, if we append, they go to bottom.
+                # If we want Points at top, we should insert them last or ...
+                # Let's verify standard behavior. addGroup adds to TOP of Tree.
+                # We want Points at Top of Group. 
+                # So if we iterate All Ordered (Ref -> ... -> Points) and insert at 0,
+                # Reference goes to 0.
+                # Polygon goes to 0 (Ref becomes 1).
+                # ...
+                # Point goes to 0.
+                # So the order at 0 will be Points. Correct.
+                
+                group.insertChildNode(0, clone)
+                root.removeChildNode(node)
+                
+                # Check visibility for reference layers
+                if layer in reference:
+                    # We need to get the node from the group now
+                    # But wait, clone is the new node? No, clone is a QgsLayerTreeLayer object.
+                    # QgsLayerTreeNode.setItemVisibilityChecked(False)
+                    clone.setItemVisibilityChecked(False)
