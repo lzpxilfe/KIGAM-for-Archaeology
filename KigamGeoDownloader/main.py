@@ -10,7 +10,13 @@ from qgis.core import QgsProject, QgsVectorLayer
 import processing
 
 import os.path
+import tempfile
+import shutil
+import uuid
+import numpy as np
+from osgeo import gdal
 from .zip_processor import ZipProcessor
+from . import geochem_utils
 
 class MainDialog(QDialog):
     def __init__(self, parent=None, iface=None):
@@ -76,6 +82,25 @@ class MainDialog(QDialog):
         
         maxent_group.setLayout(maxent_layout)
         layout.addWidget(maxent_group)
+        
+        # Section 4: GeoChem Analysis
+        geochem_group = QGroupBox("4. 지구화학 분석 (GeoChem RGB -> Value)")
+        geochem_layout = QFormLayout()
+        
+        self.geochem_preset_combo = QgsMapLayerComboBox() # Using it as a simple combo for presets
+        # Actually QgsMapLayerComboBox is for layers. Let's use QComboBox and populate presets.
+        from qgis.PyQt.QtWidgets import QComboBox
+        self.geochem_preset_combo = QComboBox()
+        for k, p in geochem_utils.PRESETS.items():
+            self.geochem_preset_combo.addItem(p.label, k)
+        geochem_layout.addRow("원소 프리셋:", self.geochem_preset_combo)
+        
+        self.geochem_btn = QPushButton("RGB 래스터 수치화 실행 (WMS -> Raster)")
+        self.geochem_btn.clicked.connect(self.run_geochem_analysis)
+        geochem_layout.addRow("", self.geochem_btn)
+        
+        geochem_group.setLayout(geochem_layout)
+        layout.addWidget(geochem_group)
         
         # Dialog Buttons (Close only, as we have specific action buttons)
         self.buttons = QDialogButtonBox(QDialogButtonBox.Close)
@@ -147,6 +172,79 @@ class MainDialog(QDialog):
             
         except Exception as e:
             QMessageBox.critical(self, "오류", f"래스터 변환 중 예상치 못한 오류가 발생했습니다:\n{str(e)}")
+
+    def run_geochem_analysis(self):
+        """
+        Converts an RGB raster (WMS) to a numerical value raster based on legend.
+        """
+        # 1. Get Active Layer (should be a raster)
+        layer = self.iface.activeLayer()
+        if not layer or layer.type() != 1: # RasterLayer
+            QMessageBox.warning(self, "오류", "수치화할 RGB 래스터(WMS 등) 레이어를 레이어 패널에서 먼저 선택해주세요.")
+            return
+
+        # 2. Get Preset
+        preset_key = self.geochem_preset_combo.currentData()
+        preset = geochem_utils.PRESETS.get(preset_key)
+        
+        # 3. Get Save Path
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "수치화된 래스터 저장", "", "GeoTIFF (*.tif)"
+        )
+        if not save_path:
+            return
+
+        # 4. Processing
+        tmp_dir = tempfile.mkdtemp(prefix="KigamGeo_")
+        try:
+            run_id = uuid.uuid4().hex[:6]
+            rgb_path = os.path.join(tmp_dir, f"rgb_{run_id}.tif")
+            
+            # Use current canvas extent and resolution
+            canvas = self.iface.mapCanvas()
+            extent = canvas.extent()
+            width = canvas.size().width()
+            height = canvas.size().height()
+            
+            # Step A: Export current view to GeoTIFF
+            if not geochem_utils.export_geotiff(layer, rgb_path, extent, width, height):
+                raise RuntimeError("WMS 레이어 내보내기에 실패했습니다.")
+                
+            # Step B: Read and Process
+            ds = gdal.Open(rgb_path)
+            r = ds.GetRasterBand(1).ReadAsArray()
+            g = ds.GetRasterBand(2).ReadAsArray()
+            b = ds.GetRasterBand(3).ReadAsArray()
+            gt = ds.GetGeoTransform()
+            proj = ds.GetProjection()
+            
+            # core transform
+            val_arr = geochem_utils.interp_rgb_to_value(r, g, b, preset.points)
+            
+            # Step C: Inpainting (Black lines)
+            mask = geochem_utils.mask_black_lines(r, g, b)
+            val_arr[mask] = np.nan
+            val_arr = geochem_utils.gdal_fill_nodata(val_arr, -9999.0, 30)
+            
+            # Step D: Save output
+            out_ds = gdal.GetDriverByName("GTiff").Create(save_path, width, height, 1, gdal.GDT_Float32)
+            out_ds.SetGeoTransform(gt)
+            out_ds.SetProjection(proj)
+            out_band = out_ds.GetRasterBand(1)
+            out_band.WriteArray(val_arr)
+            out_band.SetNoDataValue(-9999.0)
+            out_ds = None
+            ds = None
+            
+            # Step E: Load into QGIS
+            new_layer = QgsProject.instance().addRasterLayer(save_path, f"{preset.label} (수치화)")
+            if new_layer:
+                QMessageBox.information(self, "성공", f"수치화 분석이 완료되었습니다:\n{save_path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "오류", f"분석 중 오류 발생: {str(e)}")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def get_settings(self):
         return {
