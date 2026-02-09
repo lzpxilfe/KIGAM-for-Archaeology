@@ -95,11 +95,11 @@ class MainDialog(QDialog):
         geochem_group.setLayout(geochem_layout)
         layout.addWidget(geochem_group)
 
-        # Section 4: MaxEnt Export
-        self.maxent_group = QGroupBox("4. MaxEnt용 분석 변수 생성 (Rasterize)")
+        # Section 4: Rasterize / Export
+        self.maxent_group = QGroupBox("4. 래스터 변환 및 내보내기 (Rasterize / ASC)")
         self.maxent_group.setCheckable(True)
         self.maxent_group.setChecked(False) # Folded by default
-        self.maxent_group.setToolTip("지질도(Vector)나 수치화된 지구화학도(Raster)를 MaxEnt 분석용 데이터로 변환합니다.")
+        self.maxent_group.setToolTip("지질도(Vector)나 지구화학도(Raster)를 분석용 데이터(GeoTIFF/ASC)로 변환합니다.")
         maxent_layout = QVBoxLayout()
         
         maxent_layout.addWidget(QLabel("변환할 레이어를 선택하세요 (지질도 또는 지구화학도):"))
@@ -158,7 +158,7 @@ class MainDialog(QDialog):
         <p><b>1. 데이터 다운로드:</b> KIGAM 웹사이트에서 지질도 데이터를 다운로드합니다.</p>
         <p><b>2. 지질도 불러오기:</b> 다운로드한 ZIP 파일을 선택하고 '자동 로드'를 클릭하면 스타일과 라벨이 자동 적용됩니다.</p>
         <p><b>3. 지구화학 분석:</b> WMS/WFS로 불러온 지구화학도의 RGB 색상을 수치 데이터로 변환합니다. 원소 프리셋을 선택하여 처리하세요.</p>
-        <p><b>4. MaxEnt 변수 생성:</b> 분석된 결과물들을 MaxEnt 분석 소프트웨어용 래스터(GeoTIFF)로 내보냅니다. 여러 지질도를 선택하면 하나로 병합됩니다.</p>
+        <p><b>4. 래스터 변환:</b> 지질도나 지구화학도 결과물을 분석용 래스터(GeoTIFF/ASC)로 변환 및 내보냅니다. 여러 지질도를 선택하면 하나로 병합됩니다.</p>
         <br>
         <p><i>* 개발 기준: ArchToolkit (lzpxilfe/ar) 동기화 버전</i></p>
         """
