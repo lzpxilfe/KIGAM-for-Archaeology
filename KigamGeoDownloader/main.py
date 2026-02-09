@@ -4,7 +4,7 @@ from qgis.PyQt.QtWidgets import (
     QAction, QMessageBox, QFileDialog, QDialog, QVBoxLayout, 
     QHBoxLayout, QLabel, QFontComboBox, QSpinBox, QDialogButtonBox,
     QPushButton, QLineEdit, QGroupBox, QFormLayout, QComboBox,
-    QListWidget, QListWidgetItem
+    QListWidget, QListWidgetItem, QTextEdit
 )
 from qgis.PyQt.QtGui import QIcon, QDesktopServices
 from qgis.core import QgsProject, QgsVectorLayer, QgsCoordinateTransform
@@ -81,6 +81,12 @@ class MainDialog(QDialog):
         geochem_group.setToolTip("WMS/WFS 지구화학도의 RGB 색상을 수치 데이터(Value)로 변환합니다.")
         geochem_layout = QFormLayout()
         
+        # WMS Layer Selection (new!)
+        self.wms_layer_combo = QComboBox()
+        self.wms_layer_combo.setToolTip("분석할 지구화학 WMS 레이어를 선택하세요. (래스터 레이어만 표시됨)")
+        geochem_layout.addRow("WMS 레이어:", self.wms_layer_combo)
+        
+        # Preset Selection
         self.geochem_preset_combo = QComboBox()
         self.geochem_preset_combo.setToolTip("분석할 원소 항목을 선택하세요. 각 원소별로 특화된 수치 변환 알고리즘이 적용됩니다.")
         for k, p in geochem_utils.PRESETS.items():
@@ -94,7 +100,7 @@ class MainDialog(QDialog):
         # Extent Setting
         self.extent_layer_combo = QComboBox()
         self.extent_layer_combo.setToolTip("분석 범위를 제한할 기준 레이어를 선택하세요. (선택 안 함 = 전체 화면)")
-        geochem_layout.addRow("분석 범위 (Extent):", self.extent_layer_combo)
+        geochem_layout.addRow("분석 범위 (대상지):", self.extent_layer_combo)
 
         self.geochem_res_spin = QSpinBox()
         self.geochem_res_spin.setRange(1, 1000)
@@ -102,6 +108,11 @@ class MainDialog(QDialog):
         self.geochem_res_spin.setSuffix(" m")
         self.geochem_res_spin.setToolTip("변환될 결과 래스터의 해상도(픽셀 크기)를 설정합니다.")
         geochem_layout.addRow("해상도 (Resolution):", self.geochem_res_spin)
+
+        # Refresh Button for layer combos
+        refresh_layers_btn = QPushButton("레이어 목록 새로고침")
+        refresh_layers_btn.clicked.connect(self.refresh_geochem_layer_combos)
+        geochem_layout.addRow("", refresh_layers_btn)
 
         self.geochem_btn = QPushButton("RGB 래스터 수치화 실행 (WMS -> Raster)")
         self.geochem_btn.setToolTip("현재 선택된 원소 프리셋과 범위/해상도를 사용하여 RGB 래스터를 수치 래스터로 변환합니다.")
@@ -151,6 +162,24 @@ class MainDialog(QDialog):
         self.maxent_group.setLayout(maxent_layout)
         layout.addWidget(self.maxent_group)
         
+        # Log Panel (Collapsible)
+        self.log_group = QGroupBox("📋 분석 로그")
+        self.log_group.setCheckable(True)
+        self.log_group.setChecked(True)
+        log_layout = QVBoxLayout()
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(150)
+        self.log_text.setStyleSheet("font-family: Consolas, monospace; font-size: 11px; background-color: #1e1e1e; color: #d4d4d4;")
+        log_layout.addWidget(self.log_text)
+        
+        clear_log_btn = QPushButton("로그 지우기")
+        clear_log_btn.clicked.connect(lambda: self.log_text.clear())
+        log_layout.addWidget(clear_log_btn)
+        
+        self.log_group.setLayout(log_layout)
+        layout.addWidget(self.log_group)
+        
         # Bottom Buttons
         bottom_layout = QHBoxLayout()
         
@@ -167,6 +196,9 @@ class MainDialog(QDialog):
         layout.addLayout(bottom_layout)
         
         self.setLayout(layout)
+        
+        # Auto-populate layer combo boxes on dialog open
+        self.refresh_geochem_layer_combos()
 
     def show_help(self):
         help_text = """
@@ -179,6 +211,49 @@ class MainDialog(QDialog):
         <p><i>* 개발 기준: ArchToolkit (lzpxilfe/ar) 동기화 버전</i></p>
         """
         QMessageBox.information(self, "도움말", help_text)
+
+    def log(self, message: str):
+        """Write a message to the built-in log panel."""
+        from PyQt5.QtCore import QCoreApplication
+        self.log_text.append(message)
+        self.log_text.verticalScrollBar().setValue(self.log_text.verticalScrollBar().maximum())
+        QCoreApplication.processEvents()
+
+    def refresh_geochem_layer_combos(self):
+        """Refresh the WMS layer and extent layer combo boxes."""
+        # Save current selections
+        current_wms = self.wms_layer_combo.currentData()
+        current_extent = self.extent_layer_combo.currentData()
+        
+        # Clear and repopulate WMS combo (raster layers only)
+        self.wms_layer_combo.clear()
+        self.wms_layer_combo.addItem("(레이어 선택)", None)
+        
+        # Clear and repopulate extent combo (VECTOR layers only, as requested)
+        self.extent_layer_combo.clear()
+        self.extent_layer_combo.addItem("(전체 화면)", None)
+        
+        layers = QgsProject.instance().mapLayers().values()
+        for layer in layers:
+            # WMS combo: raster layers only
+            if layer.type() == 1:  # RasterLayer
+                self.wms_layer_combo.addItem(layer.name(), layer.id())
+            
+            # Extent combo: VECTOR layers only
+            if layer.type() == 0: # VectorLayer
+                self.extent_layer_combo.addItem(f"[대상지] {layer.name()}", layer.id())
+        
+        # Restore selections if possible
+        if current_wms:
+            idx = self.wms_layer_combo.findData(current_wms)
+            if idx >= 0:
+                self.wms_layer_combo.setCurrentIndex(idx)
+        if current_extent:
+            idx = self.extent_layer_combo.findData(current_extent)
+            if idx >= 0:
+                self.extent_layer_combo.setCurrentIndex(idx)
+        
+        self.log(f"레이어 새로고침: WMS {self.wms_layer_combo.count()-1}개, 대상지 {self.extent_layer_combo.count()-1}개")
 
     def refresh_layer_list(self):
         self.layer_list.clear()
@@ -339,15 +414,31 @@ class MainDialog(QDialog):
         """
         Converts an RGB raster (WMS) to a numerical value raster based on legend.
         """
-        # 1. Get Active Layer (should be a raster)
-        layer = self.iface.activeLayer()
+        # 1. Get WMS Layer from combo box (not active layer!)
+        wms_layer_id = self.wms_layer_combo.currentData()
+        if not wms_layer_id:
+            QMessageBox.warning(self, "오류", "WMS 레이어를 선택해주세요.\n(레이어 목록 새로고침 버튼을 눌러 목록을 갱신하세요)")
+            return
+        
+        layer = QgsProject.instance().mapLayer(wms_layer_id)
         if not layer or layer.type() != 1: # RasterLayer
-            QMessageBox.warning(self, "오류", "수치화할 RGB 래스터(WMS 등) 레이어를 레이어 패널에서 먼저 선택해주세요.")
+            QMessageBox.warning(self, "오류", "선택한 레이어가 유효하지 않습니다. 래스터 레이어를 선택해주세요.")
             return
 
         # 2. Get Preset
         preset_key = self.geochem_preset_combo.currentData()
+        preset_text = self.geochem_preset_combo.currentText()
         preset = geochem_utils.PRESETS.get(preset_key)
+        
+        # Log to built-in panel
+        self.log("=========== GeoChem 분석 시작 ===========")
+        self.log(f"활성 레이어: {layer.name()}")
+        self.log(f"선택한 프리셋: {preset_text} (key={preset_key})")
+        self.log(f"프리셋 확인: {preset.label if preset else 'NOT FOUND!'}")
+        
+        if not preset:
+            QMessageBox.warning(self, "오류", f"프리셋을 찾을 수 없습니다: {preset_key}")
+            return
         
         # 3. Get Save Path
         save_path, _ = QFileDialog.getSaveFileName(
@@ -372,25 +463,32 @@ class MainDialog(QDialog):
 
             # IF Layer Selected: Use Layer Extent and Calculated Size
             target_res = self.geochem_res_spin.value()
-            selected_extent_layer = self.extent_layer_combo.currentData()
+            selected_extent_layer_id = self.extent_layer_combo.currentData()
             
-            if selected_extent_layer:
-                full_extent = selected_extent_layer.extent()
-                # Transform to Project CRS if needed? Usually layer.extent() is in layer CRS.
-                # Ideally we want Project CRS extent if we are doing canvas operations or WMS requests in Project CRS.
-                # Let's assume everything is in Project CRS for simplicity or handle transform.
-                # Better: get extent in Canvas CRS (Project CRS)
+            if selected_extent_layer_id:
+                # Retrieve actual layer object from ID (FIXED string error)
+                selected_extent_layer = QgsProject.instance().mapLayer(selected_extent_layer_id)
                 
-                tr = QgsCoordinateTransform(selected_extent_layer.crs(), QgsProject.instance().crs(), QgsProject.instance())
-                extent = tr.transformBoundingBox(full_extent)
-                
-                # Calculate W/H based on Resolution
-                width = int(extent.width() / target_res)
-                height = int(extent.height() / target_res)
-                
-                # Sanity check
-                if width <= 0 or height <= 0:
-                     raise ValueError("계산된 이미지 크기가 너무 작습니다. 해상도를 확인하세요.")
+                if selected_extent_layer:
+                    full_extent = selected_extent_layer.extent()
+                    # Transform to Project CRS if needed? Usually layer.extent() is in layer CRS.
+                    # Ideally we want Project CRS extent if we are doing canvas operations or WMS requests in Project CRS.
+                    # Let's assume everything is in Project CRS for simplicity or handle transform.
+                    
+                    tr = QgsCoordinateTransform(selected_extent_layer.crs(), QgsProject.instance().crs(), QgsProject.instance())
+                    extent = tr.transformBoundingBox(full_extent)
+                    
+                    # Calculate W/H based on Resolution
+                    width = int(extent.width() / target_res)
+                    height = int(extent.height() / target_res)
+                    
+                    # Sanity check
+                    if width <= 0 or height <= 0:
+                         raise ValueError("계산된 이미지 크기가 너무 작습니다. 해상도를 확인하세요.")
+                    
+                    self.log(f"분석 범위 (대상지): {selected_extent_layer.name()}")
+                else:
+                    self.log("[WARNING] 선택된 대상지 레이어를 찾을 수 없습니다. 전체 화면 범위로 진행합니다.")
             else:
                 # If using Canvas Extent but want specific resolution?
                 # User might zoom in and out. The original logic used canvas pixels (screenshot-like).
