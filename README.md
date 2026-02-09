@@ -35,5 +35,20 @@
 
 이 플러그인은 **ArchToolkit (lzpxilfe/ar)** 개발 로직과의 호환성을 고려하여 제작되었습니다. 특히 지구화학 수치화 알고리즘은 공식적인 백분위수 등급 구분을 따릅니다.
 
+## 🌟 Citation & Star
+
+이 플러그인이 유용했다면 **GitHub Star ⭐**를 눌러주세요! 개발자에게 큰 힘이 됩니다.
+
+If you find this repository useful, please consider giving it a **star ⭐** and citing it in your work:
+
+```bibtex
+@software{kigam_for_archaeology,
+  author = {lzpxilfe},
+  title = {KIGAM for Archaeology: QGIS Plugin for Geological Map Analysis},
+  year = {2026},
+  url = {https://github.com/lzpxilfe/KIGAM-for-Archaeology}
+}
+```
+
 ---
 © 2026 lzpxilfe. Licensed under **GNU GPL v3**.
