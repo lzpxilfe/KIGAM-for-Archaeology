@@ -17,10 +17,18 @@
 - **변수 추출**: 여러 지질도 레이어 또는 수치화된 지구화학도 레이어를 선택하여 MaxEnt 분석 등 다양한 용도의 **GeoTIFF/ASCII Grid** 래스터 형식으로 내보냅니다.
 - **자동 병합**: 여러 개의 지질도 벡터 레이어를 선택하면 자동으로 하나의 레이어로 병합하여 단일 래스터 파일로 생성합니다.
 
-## 설치 및 사용 방법
+## 설치 및 사용 방법 (Installation & Usage)
 
-1. **설치**: 본 리포지토리를 다운로드하여 QGIS 플러그인 폴더에 `KigamGeoDownloader` 폴더명으로 복사합니다.
-2. **실행**: QGIS 상단 툴바의 아이콘 또는 메뉴에서 `KIGAM Tools`를 실행합니다.
+### 설치 (Installation)
+1. **GitHub Release**: [Releases](https://github.com/lzpxilfe/KIGAM-for-Archaeology/releases) 페이지에서 최신 `KigamGeoDownloader.zip` (v0.1.0) 파일을 다운로드합니다.
+2. **QGIS 플러그인 설치**:
+    - QGIS 메뉴: `플러그인` > `플러그인 관리 및 설치` > `ZIP 파일에서 설치`
+    - 다운로드한 ZIP 파일을 선택하여 설치합니다.
+3. **직접 설치 (개발자용)**: 본 리포지토리를 클론하여 QGIS 프로필 폴더(`.../python/plugins/`)에 `KigamGeoDownloader` 폴더를 복사합니다.
+
+### 사용 방법 (Usage)
+1. **실행**: QGIS 상단 툴바의 아이콘 또는 메뉴에서 `KIGAM Tools`를 실행합니다.
+2. **데이터 준비**: KIGAM 웹사이트에서 1:50,000 지질도 ZIP 파일을 다운로드합니다.
 3. **도움말**: 플러그인 하단의 **도움말 (?)** 버튼을 클릭하면 상세한 사용 가이드를 확인할 수 있습니다.
 
 ## 개발 및 참고 (For Developers)
