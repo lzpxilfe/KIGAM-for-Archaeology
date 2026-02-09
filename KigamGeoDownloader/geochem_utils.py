@@ -1,4 +1,11 @@
 # -*- coding: utf-8 -*-
+"""
+GeoChem utilities for KIGAM for Archaeology
+Ported from ArchToolkit (lzpxilfe/ar)
+
+This module contains functions and data for converting WMS RGB raster
+to numerical value rasters based on legend color mapping.
+"""
 import os
 import math
 import uuid
@@ -8,11 +15,15 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from osgeo import gdal, ogr
 from qgis.core import (
+    Qgis,
     QgsRasterLayer,
     QgsRectangle,
     QgsCoordinateTransform,
     QgsProject,
-    QgsGeometry
+    QgsGeometry,
+    QgsRasterPipe,
+    QgsRasterFileWriter,
+    QgsRasterProjector
 )
 
 @dataclass(frozen=True)
@@ -85,14 +96,31 @@ PRESETS: Dict[str, GeoChemPreset] = {
     "cao": GeoChemPreset(key="cao", label="CaO (칼슘)", unit="%", points=CAO_POINTS),
 }
 
+
+def _points_to_breaks(points: Sequence[LegendPoint]) -> List[float]:
+    """Extract break values from legend points."""
+    vals = [float(p.value) for p in points]
+    vals = sorted(set(vals))
+    return vals
+
+
 def interp_rgb_to_value(
+    *,
     r: np.ndarray,
     g: np.ndarray,
     b: np.ndarray,
     points: Sequence[LegendPoint],
     snap_last_t: Optional[float] = None,
 ) -> np.ndarray:
-    """Vectorized mapping: RGB -> scalar value by projecting to the nearest legend segments."""
+    """Vectorized mapping: RGB -> scalar value by projecting to the nearest legend polyline segment in RGB space.
+    
+    This is the exact algorithm from ArchToolkit.
+    """
+    if r.shape != g.shape or r.shape != b.shape:
+        raise ValueError("RGB bands must have the same shape")
+    if len(points) < 2:
+        raise ValueError("Need at least 2 legend points")
+
     rr = r.astype(np.float32, copy=False)
     gg = g.astype(np.float32, copy=False)
     bb = b.astype(np.float32, copy=False)
@@ -102,37 +130,69 @@ def interp_rgb_to_value(
 
     pts = list(points)
     last_seg_idx = len(pts) - 2
+    snap_last = None
+    if snap_last_t is not None:
+        try:
+            snap_last = float(snap_last_t)
+        except Exception:
+            snap_last = None
+    if snap_last is not None and not (0.0 <= snap_last <= 1.0):
+        snap_last = None
 
     for i in range(len(pts) - 1):
-        v1, v2 = float(pts[i].value), float(pts[i + 1].value)
-        c1, c2 = pts[i].rgb, pts[i + 1].rgb
+        v1 = float(pts[i].value)
+        v2 = float(pts[i + 1].value)
+        c1 = pts[i].rgb
+        c2 = pts[i + 1].rgb
 
-        c1r, c1g, c1b = np.float32(c1[0]), np.float32(c1[1]), np.float32(c1[2])
-        vr, vg, vb = np.float32(c2[0] - c1[0]), np.float32(c2[1] - c1[1]), np.float32(c2[2] - c1[2])
-        v_len_sq = vr * vr + vg * vg + vb * vb
-        if v_len_sq <= 0: continue
+        c1r = np.float32(c1[0])
+        c1g = np.float32(c1[1])
+        c1b = np.float32(c1[2])
+        vr = np.float32(c2[0] - c1[0])
+        vg = np.float32(c2[1] - c1[1])
+        vb = np.float32(c2[2] - c1[2])
+        v_len_sq = np.float32(vr * vr + vg * vg + vb * vb)
+        if v_len_sq <= 0:
+            continue
 
         t = ((rr - c1r) * vr + (gg - c1g) * vg + (bb - c1b) * vb) / v_len_sq
-        np.clip(t, 0.0, 1.0, out=t)
-        
-        if snap_last_t is not None and i == last_seg_idx:
-            t[t > np.float32(snap_last_t)] = 1.0
-
-        pr, pg, pb = c1r + t * vr, c1g + t * vg, c1b + t * vb
+        np.clip(t, np.float32(0.0), np.float32(1.0), out=t)
+        if snap_last is not None and i == last_seg_idx:
+            # Important: apply snap BEFORE distance comparison (affects which segment wins).
+            try:
+                t[t > np.float32(snap_last)] = np.float32(1.0)
+            except Exception:
+                pass
+        pr = c1r + t * vr
+        pg = c1g + t * vg
+        pb = c1b + t * vb
         dist_sq = (rr - pr) ** 2 + (gg - pg) ** 2 + (bb - pb) ** 2
 
         mask = dist_sq < min_dist
-        if not np.any(mask): continue
+        if not np.any(mask):
+            continue
 
-        out[mask] = np.float32(v1) + t[mask] * np.float32(v2 - v1)
-        min_dist[mask] = dist_sq[mask]
+        base = np.float32(v1)
+        delta = np.float32(v2 - v1)
+        out[mask] = base + t[mask].astype(np.float32, copy=False) * delta
+        min_dist[mask] = dist_sq[mask].astype(np.float32, copy=False)
 
     return out
 
+
 def mask_black_lines(r: np.ndarray, g: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Detect neutral dark 'linework' mask."""
-    rr, gg, bb = r.astype(np.int16), g.astype(np.int16), b.astype(np.int16)
-    return (rr < 75) & (gg < 75) & (bb < 75) & (np.abs(rr - gg) < 15) & (np.abs(gg - bb) < 15)
+    """Detect neutral dark 'linework' (not intense red/brown) and return mask."""
+    rr = r.astype(np.int16, copy=False)
+    gg = g.astype(np.int16, copy=False)
+    bb = b.astype(np.int16, copy=False)
+    return (
+        (rr < 75)
+        & (gg < 75)
+        & (bb < 75)
+        & (np.abs(rr - gg) < 15)
+        & (np.abs(gg - bb) < 15)
+    )
+
 
 def gdal_fill_nodata(arr: np.ndarray, nodata: float, max_dist_px: int) -> np.ndarray:
     """Fill nodata using GDAL FillNodata."""
@@ -143,23 +203,67 @@ def gdal_fill_nodata(arr: np.ndarray, nodata: float, max_dist_px: int) -> np.nda
     band = ds.GetRasterBand(1)
     band.WriteArray(a)
     band.SetNoDataValue(float(nodata))
-    gdal.FillNodata(targetBand=band, maskBand=None, maxSearchDist=max_dist_px, smoothingIterations=0)
+    gdal.FillNodata(targetBand=band, maskBand=None, maxSearchDist=max(1, max_dist_px), smoothingIterations=0)
     filled = band.ReadAsArray()
     ds = None
     return filled
 
-def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width: int, height: int):
-    """Export a raster layer to a GeoTIFF using QGIS Processing."""
+
+def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width: int, height: int) -> bool:
+    """
+    Export a raster layer (including WMS) to a GeoTIFF.
+    Uses QgsRasterFileWriter, falls back to GDAL warp if needed.
+    Ported from ArchToolkit.
+    """
     import processing
-    params = {
-        'INPUT': layer,
-        'EXTENT': extent,
-        'WIDTH': width,
-        'HEIGHT': height,
-        'NODATA': None,
-        'OPTIONS': 'COMPRESS=DEFLATE',
-        'DATA_TYPE': 5, # Float32
-        'OUTPUT': path
-    }
-    processing.run("gdal:translate", params)
-    return os.path.exists(path)
+    
+    try:
+        provider = layer.dataProvider()
+        pipe = QgsRasterPipe()
+        if not pipe.set(provider.clone()):
+            # Fallback: some providers may not support clone() cleanly.
+            if not pipe.set(provider):
+                raise RuntimeError("pipe.set(provider) failed")
+        writer = QgsRasterFileWriter(path)
+        writer.setOutputFormat("GTiff")
+        writer.setCreateOptions(["COMPRESS=LZW", "TILED=YES"])
+        ctx = QgsProject.instance().transformContext()
+        res = writer.writeRaster(pipe, int(width), int(height), extent, layer.crs(), ctx)
+        if res != 0:
+            print(f"[GeoChem] writeRaster returned {res}")
+            raise RuntimeError(f"writeRaster failed ({res})")
+        if os.path.exists(path):
+            return True
+    except Exception as e:
+        print(f"[GeoChem] QGIS export failed, trying GDAL warp... ({e})")
+
+    # Fallback: GDAL warp through Processing (more provider-compatible)
+    try:
+        extent_str = f"{extent.xMinimum()},{extent.xMaximum()},{extent.yMinimum()},{extent.yMaximum()}"
+        # Match the requested width/height via target resolution in layer CRS units.
+        px = max(extent.width() / max(1, int(width)), extent.height() / max(1, int(height)))
+        px = float(px) if px > 0 else None
+        processing.run(
+            "gdal:warpreproject",
+            {
+                "INPUT": layer,
+                "SOURCE_CRS": None,
+                "TARGET_CRS": None,
+                "RESAMPLING": 0,  # Nearest (preserve legend colors)
+                "NODATA": None,
+                "TARGET_RESOLUTION": px,
+                "OPTIONS": "COMPRESS=LZW|TILED=YES",
+                "DATA_TYPE": 0,
+                "TARGET_EXTENT": extent_str,
+                "TARGET_EXTENT_CRS": layer.crs().authid() if layer.crs() else None,
+                "MULTITHREADING": False,
+                "EXTRA": "",
+                "OUTPUT": path,
+            },
+        )
+        if os.path.exists(path):
+            return True
+    except Exception as e2:
+        print(f"[GeoChem] GDAL warp fallback also failed: {e2}")
+        
+    return False

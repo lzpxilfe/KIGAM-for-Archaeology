@@ -7,7 +7,7 @@ from qgis.PyQt.QtWidgets import (
     QListWidget, QListWidgetItem
 )
 from qgis.PyQt.QtGui import QIcon, QDesktopServices
-from qgis.core import QgsProject, QgsVectorLayer
+from qgis.core import QgsProject, QgsVectorLayer, QgsCoordinateTransform
 import processing
 
 import os.path
@@ -87,13 +87,29 @@ class MainDialog(QDialog):
             self.geochem_preset_combo.addItem(p.label, k)
         geochem_layout.addRow("원소 프리셋:", self.geochem_preset_combo)
         
-        self.geochem_btn = QPushButton("RGB 래스터 수치화 실행 (WMS -> Raster)")
-        self.geochem_btn.setToolTip("현재 선택된 원소 프리셋을 사용하여 RGB 래스터를 수치 래스터로 변환 및 저장합니다.")
-        self.geochem_btn.clicked.connect(self.run_geochem_analysis)
-        geochem_layout.addRow("", self.geochem_btn)
         
         geochem_group.setLayout(geochem_layout)
         layout.addWidget(geochem_group)
+
+        # Extent Setting
+        self.extent_layer_combo = QComboBox()
+        self.extent_layer_combo.setToolTip("분석 범위를 제한할 기준 레이어를 선택하세요. (선택 안 함 = 전체 화면)")
+        geochem_layout.addRow("분석 범위 (Extent):", self.extent_layer_combo)
+
+        self.geochem_res_spin = QSpinBox()
+        self.geochem_res_spin.setRange(1, 1000)
+        self.geochem_res_spin.setValue(30)
+        self.geochem_res_spin.setSuffix(" m")
+        self.geochem_res_spin.setToolTip("변환될 결과 래스터의 해상도(픽셀 크기)를 설정합니다.")
+        geochem_layout.addRow("해상도 (Resolution):", self.geochem_res_spin)
+
+        self.geochem_btn = QPushButton("RGB 래스터 수치화 실행 (WMS -> Raster)")
+        self.geochem_btn.setToolTip("현재 선택된 원소 프리셋과 범위/해상도를 사용하여 RGB 래스터를 수치 래스터로 변환합니다.")
+        self.geochem_btn.clicked.connect(self.run_geochem_analysis)
+        geochem_layout.addRow("", self.geochem_btn)
+        
+        # Add Refresh Button for Extent Combo (Reuse logic if possible or separate)
+        # Actually refresh_layer_list can serve both
 
         # Section 4: Rasterize / Export
         self.maxent_group = QGroupBox("4. 래스터 변환 및 내보내기 (Rasterize / ASC)")
@@ -177,7 +193,15 @@ class MainDialog(QDialog):
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                 item.setCheckState(Qt.Checked)
                 item.setData(Qt.UserRole, layer.id())
+                item.setData(Qt.UserRole, layer.id())
                 self.layer_list.addItem(item)
+        
+        # Refresh Extent Combo for GeoChem
+        self.extent_layer_combo.clear()
+        self.extent_layer_combo.addItem("전체 화면범위 (Canvas Extent)", None)
+        for layer in layers:
+             if layer.type() == 0: # Vector Layer
+                 self.extent_layer_combo.addItem(f"[Vector] {layer.name()}", layer)
 
     def open_kigam_website(self):
         QDesktopServices.openUrl(QUrl("https://data.kigam.re.kr/search?subject=Geology"))
@@ -340,29 +364,92 @@ class MainDialog(QDialog):
             
             # Use current canvas extent and resolution
             canvas = self.iface.mapCanvas()
+            
+            # DEFAULT: Canvas Extent and Size
             extent = canvas.extent()
             width = canvas.size().width()
             height = canvas.size().height()
+
+            # IF Layer Selected: Use Layer Extent and Calculated Size
+            target_res = self.geochem_res_spin.value()
+            selected_extent_layer = self.extent_layer_combo.currentData()
             
+            if selected_extent_layer:
+                full_extent = selected_extent_layer.extent()
+                # Transform to Project CRS if needed? Usually layer.extent() is in layer CRS.
+                # Ideally we want Project CRS extent if we are doing canvas operations or WMS requests in Project CRS.
+                # Let's assume everything is in Project CRS for simplicity or handle transform.
+                # Better: get extent in Canvas CRS (Project CRS)
+                
+                tr = QgsCoordinateTransform(selected_extent_layer.crs(), QgsProject.instance().crs(), QgsProject.instance())
+                extent = tr.transformBoundingBox(full_extent)
+                
+                # Calculate W/H based on Resolution
+                width = int(extent.width() / target_res)
+                height = int(extent.height() / target_res)
+                
+                # Sanity check
+                if width <= 0 or height <= 0:
+                     raise ValueError("계산된 이미지 크기가 너무 작습니다. 해상도를 확인하세요.")
+            else:
+                # If using Canvas Extent but want specific resolution?
+                # User might zoom in and out. The original logic used canvas pixels (screenshot-like).
+                # If user wants specific resolution on canvas extent:
+                width = int(extent.width() / target_res)
+                height = int(extent.height() / target_res)
+
             # Step A: Export current view to GeoTIFF
             if not geochem_utils.export_geotiff(layer, rgb_path, extent, width, height):
                 raise RuntimeError("WMS 레이어 내보내기에 실패했습니다.")
                 
             # Step B: Read and Process
             ds = gdal.Open(rgb_path)
+            band_count = ds.RasterCount
+            if band_count < 3:
+                raise RuntimeError("RGB 래스터는 최소 3밴드(R,G,B)가 필요합니다.")
             r = ds.GetRasterBand(1).ReadAsArray()
             g = ds.GetRasterBand(2).ReadAsArray()
             b = ds.GetRasterBand(3).ReadAsArray()
+            alpha = None
+            if band_count >= 4:
+                try:
+                    alpha = ds.GetRasterBand(4).ReadAsArray()
+                except Exception:
+                    alpha = None
             gt = ds.GetGeoTransform()
             proj = ds.GetProjection()
             
-            # core transform
-            val_arr = geochem_utils.interp_rgb_to_value(r, g, b, preset.points)
+            # core transform (ArchToolkit-compatible, keyword-only args)
+            val_arr = geochem_utils.interp_rgb_to_value(
+                r=r, g=g, b=b,
+                points=preset.points,
+                snap_last_t=None # No snap
+            )
+            nodata_val = np.float32(-9999.0)
+            
+            # Transparent pixels (if alpha band exists) -> NoData
+            if alpha is not None:
+                try:
+                    transparent = alpha.astype(np.int16) <= 0
+                    val_arr = val_arr.astype(np.float32)
+                    val_arr[transparent] = nodata_val
+                except Exception:
+                    pass
+            
+            # Low values as NoData (like ArchToolkit)
+            try:
+                breaks = geochem_utils._points_to_breaks(preset.points)
+                min_valid = float(breaks[1]) if len(breaks) >= 2 else None
+                if min_valid is not None:
+                    low_mask = np.isfinite(val_arr) & (val_arr != nodata_val) & (val_arr < np.float32(min_valid))
+                    val_arr[low_mask] = nodata_val
+            except Exception:
+                pass
             
             # Step C: Inpainting (Black lines)
             mask = geochem_utils.mask_black_lines(r, g, b)
-            val_arr[mask] = np.nan
-            val_arr = geochem_utils.gdal_fill_nodata(val_arr, -9999.0, 30)
+            val_arr[mask] = nodata_val
+            val_arr = geochem_utils.gdal_fill_nodata(val_arr, nodata_val, 30)
             
             # Step D: Save output
             out_ds = gdal.GetDriverByName("GTiff").Create(save_path, width, height, 1, gdal.GDT_Float32)
@@ -370,14 +457,15 @@ class MainDialog(QDialog):
             out_ds.SetProjection(proj)
             out_band = out_ds.GetRasterBand(1)
             out_band.WriteArray(val_arr)
-            out_band.SetNoDataValue(-9999.0)
+            out_band.SetNoDataValue(float(nodata_val))
             out_ds = None
             ds = None
             
             # Step E: Load into QGIS
-            new_layer = QgsProject.instance().addRasterLayer(save_path, f"{preset.label} (수치화)")
-            if new_layer:
-                QMessageBox.information(self, "성공", f"수치화 분석이 완료되었습니다:\n{save_path}")
+            new_layer = QgsProject.instance().addMapLayer(
+                QgsProject.instance().addRasterLayer(save_path, f"{preset.label} (수치화)")
+            )
+            QMessageBox.information(self, "성공", f"수치화 분석이 완료되었습니다:\n{save_path}")
             
         except Exception as e:
             QMessageBox.critical(self, "오류", f"분석 중 오류 발생: {str(e)}")

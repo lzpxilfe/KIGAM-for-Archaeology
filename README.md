@@ -20,7 +20,7 @@
 ## 설치 및 사용 방법 (Installation & Usage)
 
 ### 설치 (Installation)
-1. **GitHub Release**: [Releases](https://github.com/lzpxilfe/KIGAM-for-Archaeology/releases) 페이지에서 최신 `KigamGeoDownloader.zip` (v0.1.0) 파일을 다운로드합니다.
+1. **GitHub Release**: [Releases](https://github.com/lzpxilfe/KIGAM-for-Archaeology/releases) 페이지에서 최신 `KigamGeoDownloader.zip` 파일을 다운로드합니다.
 2. **QGIS 플러그인 설치**:
     - QGIS 메뉴: `플러그인` > `플러그인 관리 및 설치` > `ZIP 파일에서 설치`
     - 다운로드한 ZIP 파일을 선택하여 설치합니다.
