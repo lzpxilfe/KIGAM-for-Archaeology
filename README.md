@@ -51,4 +51,4 @@ If you find this repository useful, please consider giving it a **star ⭐** and
 ```
 
 ---
-© 2026 lzpxilfe. Licensed under **GNU GPL v3**.
+© 2026 balguljang2(lzpxilfe). Licensed under **GNU GPL v3**.
