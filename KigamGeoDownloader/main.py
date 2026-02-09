@@ -402,7 +402,18 @@ class MainDialog(QDialog):
             if not geochem_utils.export_geotiff(layer, rgb_path, extent, width, height):
                 raise RuntimeError("WMS 레이어 내보내기에 실패했습니다.")
                 
-            # Step B: Read and Process
+            # Step B: Read and Process with Progress Dialog
+            from PyQt5.QtWidgets import QProgressDialog
+            from PyQt5.QtCore import Qt
+            from qgis.core import QgsColorRampShader, QgsRasterShader, QgsSingleBandPseudoColorRenderer
+            from PyQt5.QtGui import QColor
+            
+            progress = QProgressDialog("지구화학 분석 중...", "취소", 0, 100, self)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setValue(10)
+            QCoreApplication.processEvents()
+            
             ds = gdal.Open(rgb_path)
             band_count = ds.RasterCount
             if band_count < 3:
@@ -419,6 +430,13 @@ class MainDialog(QDialog):
             gt = ds.GetGeoTransform()
             proj = ds.GetProjection()
             
+            progress.setValue(30)
+            progress.setLabelText("RGB → 수치 변환 중...")
+            QCoreApplication.processEvents()
+            
+            if progress.wasCanceled():
+                raise RuntimeError("사용자가 취소했습니다.")
+            
             # core transform (ArchToolkit-compatible, keyword-only args)
             val_arr = geochem_utils.interp_rgb_to_value(
                 r=r, g=g, b=b,
@@ -426,6 +444,10 @@ class MainDialog(QDialog):
                 snap_last_t=None # No snap
             )
             nodata_val = np.float32(-9999.0)
+            
+            progress.setValue(60)
+            progress.setLabelText("NoData 처리 중...")
+            QCoreApplication.processEvents()
             
             # Transparent pixels (if alpha band exists) -> NoData
             if alpha is not None:
@@ -446,10 +468,18 @@ class MainDialog(QDialog):
             except Exception:
                 pass
             
+            progress.setValue(70)
+            progress.setLabelText("경계선 보정 중...")
+            QCoreApplication.processEvents()
+            
             # Step C: Inpainting (Black lines)
             mask = geochem_utils.mask_black_lines(r, g, b)
             val_arr[mask] = nodata_val
             val_arr = geochem_utils.gdal_fill_nodata(val_arr, nodata_val, 30)
+            
+            progress.setValue(85)
+            progress.setLabelText("파일 저장 중...")
+            QCoreApplication.processEvents()
             
             # Step D: Save output
             out_ds = gdal.GetDriverByName("GTiff").Create(save_path, width, height, 1, gdal.GDT_Float32)
@@ -461,10 +491,46 @@ class MainDialog(QDialog):
             out_ds = None
             ds = None
             
-            # Step E: Load into QGIS
-            new_layer = QgsProject.instance().addMapLayer(
-                QgsProject.instance().addRasterLayer(save_path, f"{preset.label} (수치화)")
-            )
+            progress.setValue(95)
+            progress.setLabelText("레이어 스타일 적용 중...")
+            QCoreApplication.processEvents()
+            
+            # Step E: Load into QGIS with Legend Styling
+            from qgis.core import QgsRasterLayer
+            new_layer = QgsRasterLayer(save_path, f"{preset.label} (수치화)")
+            if new_layer.isValid():
+                # Apply legend-based pseudo-color styling (ArchToolkit method)
+                shader = QgsRasterShader()
+                ramp = QgsColorRampShader()
+                ramp.setColorRampType(QgsColorRampShader.Interpolated)
+                items = []
+                for p in preset.points:
+                    try:
+                        val = float(p.value)
+                        col = QColor(int(p.rgb[0]), int(p.rgb[1]), int(p.rgb[2]))
+                        items.append(QgsColorRampShader.ColorRampItem(val, col, f"{val:g}{preset.unit}"))
+                    except Exception:
+                        continue
+                if items:
+                    ramp.setColorRampItemList(items)
+                    try:
+                        ramp.setMinimumValue(float(items[0].value))
+                        ramp.setMaximumValue(float(items[-1].value))
+                    except Exception:
+                        pass
+                    shader.setRasterShaderFunction(ramp)
+                    renderer = QgsSingleBandPseudoColorRenderer(new_layer.dataProvider(), 1, shader)
+                    try:
+                        renderer.setClassificationMin(float(items[0].value))
+                        renderer.setClassificationMax(float(items[-1].value))
+                    except Exception:
+                        pass
+                    new_layer.setRenderer(renderer)
+                
+                QgsProject.instance().addMapLayer(new_layer)
+            
+            progress.setValue(100)
+            progress.close()
             QMessageBox.information(self, "성공", f"수치화 분석이 완료되었습니다:\n{save_path}")
             
         except Exception as e:
