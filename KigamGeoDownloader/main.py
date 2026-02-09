@@ -103,6 +103,12 @@ class MainDialog(QDialog):
         maxent_layout = QVBoxLayout()
         
         maxent_layout.addWidget(QLabel("변환할 레이어를 선택하세요 (지질도 또는 지구화학도):"))
+        
+        # Add descriptive help text (In-place help)
+        help_lbl = QLabel("💡 팁: 여러 지질도(Vector)를 선택하면 하나로 병합됩니다.\n      수치화된 지구화학도(Raster)도 선택하여 변환할 수 있습니다.")
+        help_lbl.setStyleSheet("color: #666666; font-size: 11px; margin-bottom: 5px;")
+        maxent_layout.addWidget(help_lbl)
+
         self.layer_list = QListWidget()
         self.layer_list.setMaximumHeight(150)
         self.layer_list.setToolTip("현재 프로젝트에서 지질 정보가 포함된 레이어 목록입니다.")
