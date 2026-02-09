@@ -1,7 +1,4 @@
-# KIGAM for Archaeology (QGIS Plugin) v0.1.0 'Pallet Town'
-
-**"Welcome to Pallet Town! This is where your journey begins."**
-This version, codenamed **Pallet Town**, marks the beginning of our archaeological spatial analysis journey.
+# KIGAM for Archaeology (QGIS Plugin) v0.1.0
 
 한국지질자원연구원(KIGAM)의 1:50,000 지질도 데이터를 고고학 연구 환경에 최적화하여 활용할 수 있도록 돕는 QGIS 플러그인입니다.
 

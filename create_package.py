@@ -13,6 +13,7 @@ def create_plugin_zip(output_path):
         'main.py',
         'zip_processor.py',
         'geochem_utils.py',
+        'kigam_api_client.py',
         'metadata.txt',
         'icon.png'
     ]
@@ -46,6 +47,6 @@ if __name__ == "__main__":
     else:
         # Default to Desktop
         desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-        output_path = os.path.join(desktop, "Kigam_for_Archaeology_0.1.0_Fixed.zip")
+        output_path = os.path.join(desktop, "KIGAM_for_Archaeology_v0.1.0.zip")
         
     create_plugin_zip(output_path)
