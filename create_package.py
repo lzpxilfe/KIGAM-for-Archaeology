@@ -1,62 +1,79 @@
-﻿import os
-import zipfile
 import sys
+import zipfile
+from pathlib import Path
+
+
+PLUGIN_DIR_NAME = "KigamGeoDownloader"
+EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
+EXCLUDED_DIR_NAMES = {"__pycache__", ".git"}
+
+
+def _iter_plugin_files(source_dir: Path):
+    for path in sorted(source_dir.rglob("*")):
+        if path.is_dir():
+            continue
+        if any(part in EXCLUDED_DIR_NAMES for part in path.parts):
+            continue
+        if path.suffix.lower() in EXCLUDED_SUFFIXES:
+            continue
+        if path.name.endswith("~"):
+            continue
+        yield path
+
+
+def _read_plugin_version(source_dir: Path) -> str:
+    metadata_path = source_dir / "metadata.txt"
+    if not metadata_path.exists():
+        return "dev"
+
+    try:
+        for line in metadata_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if line.startswith("version="):
+                version = line.split("=", 1)[1].strip()
+                if version:
+                    return version
+    except Exception:
+        pass
+
+    return "dev"
+
 
 def create_plugin_zip(output_path):
-    # Source directory (current dir of script + KigamGeoDownloader)
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    source_dir = os.path.join(base_dir, 'KigamGeoDownloader')
-    
-    # Files to include from the plugin folder
-    files_to_pack = [
-        '__init__.py',
-        'main.py',
-        'zip_processor.py',
-        'geochem_utils.py',
-        'kigam_api_client.py',
-        'metadata.txt',
-        'icon.png'
-    ]
-    
-    # Top-level folder name in ZIP
-    plugin_folder_name = 'KigamGeoDownloader'
-    
+    base_dir = Path(__file__).resolve().parent
+    source_dir = base_dir / PLUGIN_DIR_NAME
+    if not source_dir.exists():
+        raise FileNotFoundError(f"Plugin directory not found: {source_dir}")
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
     print(f"Creating ZIP package: {output_path}")
-    
-    try:
-        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for filename in files_to_pack:
-                src_path = os.path.join(source_dir, filename)
-                if os.path.exists(src_path):
-                    # ARCNAME is what defines the structure in the zip
-                    # We prepend the plugin folder name
-                    arcname = os.path.join(plugin_folder_name, filename)
-                    zf.write(src_path, arcname)
-                    print(f"  Added: {filename} -> {arcname}")
-                else:
-                    print(f"  WARNING: File not found: {src_path}")
-            
-            # Add LICENSE from root directory
-            license_path = os.path.join(base_dir, 'LICENSE')
-            if os.path.exists(license_path):
-                arcname = os.path.join(plugin_folder_name, 'LICENSE')
-                zf.write(license_path, arcname)
-                print(f"  Added: LICENSE -> {arcname}")
-            else:
-                print(f"  WARNING: LICENSE not found: {license_path}")
-        
-        print("ZIP package created successfully.")
-        
-    except Exception as e:
-        print(f"Error creating ZIP: {e}")
+
+    added_count = 0
+    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for src_path in _iter_plugin_files(source_dir):
+            rel_path = src_path.relative_to(source_dir).as_posix()
+            arcname = f"{PLUGIN_DIR_NAME}/{rel_path}"
+            archive.write(src_path, arcname)
+            print(f"  Added: {rel_path}")
+            added_count += 1
+
+        license_path = base_dir / "LICENSE"
+        if license_path.exists():
+            archive.write(license_path, f"{PLUGIN_DIR_NAME}/LICENSE")
+            print("  Added: LICENSE")
+            added_count += 1
+
+    print(f"ZIP package created successfully ({added_count} file(s)).")
+
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        output_path = sys.argv[1]
-    else:
-        # Default to Desktop
-        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-        output_path = os.path.join(desktop, "KIGAM_for_Archaeology_v0.1.2.zip")
-        
-    create_plugin_zip(output_path)
+    repo_root = Path(__file__).resolve().parent
+    plugin_version = _read_plugin_version(repo_root / PLUGIN_DIR_NAME)
 
+    if len(sys.argv) > 1:
+        output_path = Path(sys.argv[1])
+    else:
+        output_path = Path.home() / "Desktop" / f"KIGAM_for_Archaeology_v{plugin_version}.zip"
+
+    create_plugin_zip(output_path)

@@ -260,7 +260,7 @@ class MainDialog(QDialog):
         layers = QgsProject.instance().mapLayers().values()
         for layer in layers:
             # Include Vector (Litho) or Raster (converted results)
-            is_litho = 'Litho' in layer.name() and layer.type() == 0
+            is_litho = 'litho' in layer.name().lower() and layer.type() == 0
             is_result = '(수치화)' in layer.name() and layer.type() == 1
             
             if is_litho or is_result:
@@ -268,15 +268,7 @@ class MainDialog(QDialog):
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                 item.setCheckState(Qt.Checked)
                 item.setData(Qt.UserRole, layer.id())
-                item.setData(Qt.UserRole, layer.id())
                 self.layer_list.addItem(item)
-        
-        # Refresh Extent Combo for GeoChem
-        self.extent_layer_combo.clear()
-        self.extent_layer_combo.addItem("전체 화면범위 (Canvas Extent)", None)
-        for layer in layers:
-             if layer.type() == 0: # Vector Layer
-                 self.extent_layer_combo.addItem(f"[Vector] {layer.name()}", layer)
 
     def open_kigam_website(self):
         QDesktopServices.openUrl(QUrl("https://data.kigam.re.kr/search?subject=Geology"))
@@ -561,32 +553,33 @@ class MainDialog(QDialog):
 
             # IF Layer Selected: Use Layer Extent and Calculated Size
             target_res = self.geochem_res_spin.value()
-            selected_extent_layer_id = self.extent_layer_combo.currentData()
+            selected_extent_data = self.extent_layer_combo.currentData()
+            selected_extent_layer = None
+
+            if isinstance(selected_extent_data, str):
+                selected_extent_layer = QgsProject.instance().mapLayer(selected_extent_data)
+            elif selected_extent_data is not None and hasattr(selected_extent_data, "id"):
+                # Backward compatibility for old combo values stored as layer objects.
+                selected_extent_layer = selected_extent_data
             
-            if selected_extent_layer_id:
-                # Retrieve actual layer object from ID (FIXED string error)
-                selected_extent_layer = QgsProject.instance().mapLayer(selected_extent_layer_id)
+            if selected_extent_layer:
                 
-                if selected_extent_layer:
-                    full_extent = selected_extent_layer.extent()
-                    # Transform to Project CRS if needed? Usually layer.extent() is in layer CRS.
-                    # Ideally we want Project CRS extent if we are doing canvas operations or WMS requests in Project CRS.
-                    # Let's assume everything is in Project CRS for simplicity or handle transform.
-                    
-                    tr = QgsCoordinateTransform(selected_extent_layer.crs(), QgsProject.instance().crs(), QgsProject.instance())
-                    extent = tr.transformBoundingBox(full_extent)
-                    
-                    # Calculate W/H based on Resolution
-                    width = int(extent.width() / target_res)
-                    height = int(extent.height() / target_res)
-                    
-                    # Sanity check
-                    if width <= 0 or height <= 0:
-                         raise ValueError("계산된 이미지 크기가 너무 작습니다. 해상도를 확인하세요.")
-                    
-                    self.log(f"분석 범위 (대상지): {selected_extent_layer.name()}")
-                else:
-                    self.log("[WARNING] 선택된 대상지 레이어를 찾을 수 없습니다. 전체 화면 범위로 진행합니다.")
+                full_extent = selected_extent_layer.extent()
+                # Transform to project CRS before export requests.
+                tr = QgsCoordinateTransform(selected_extent_layer.crs(), QgsProject.instance().crs(), QgsProject.instance())
+                extent = tr.transformBoundingBox(full_extent)
+                
+                # Calculate W/H based on resolution
+                width = int(extent.width() / target_res)
+                height = int(extent.height() / target_res)
+                
+                # Sanity check
+                if width <= 0 or height <= 0:
+                     raise ValueError("계산된 이미지 크기가 너무 작습니다. 해상도를 확인하세요.")
+                
+                self.log(f"분석 범위 (대상지): {selected_extent_layer.name()}")
+            elif selected_extent_data is not None:
+                self.log("[WARNING] 선택된 대상지 레이어를 찾을 수 없습니다. 전체 화면 범위로 진행합니다.")
             else:
                 # If using Canvas Extent but want specific resolution?
                 # User might zoom in and out. The original logic used canvas pixels (screenshot-like).

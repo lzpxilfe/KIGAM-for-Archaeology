@@ -1,55 +1,85 @@
-﻿# KIGAM for Archaeology (QGIS Plugin) v0.1.2
+# KIGAM for Archaeology (QGIS Plugin) v0.1.3
 
-?쒓뎅吏吏덉옄?먯뿰援ъ썝(KIGAM)??1:50,000 吏吏덈룄 ?곗씠?곕? 怨좉퀬???곌뎄 ?섍꼍??理쒖쟻?뷀븯???쒖슜?????덈룄濡??뺣뒗 QGIS ?뚮윭洹몄씤?낅땲??
+KIGAM 1:50,000 수치지질도 ZIP을 QGIS로 불러오고, `sym`/`qml` 기반 심볼링을 적용한 뒤 지구화학 수치화와 래스터 내보내기까지 지원하는 플러그인입니다.
 
-## 二쇱슂 湲곕뒫 (Key Features)
+## 주요 기능
 
-### 1. 吏吏덈룄 ?먮룞 濡쒕뱶 諛??ㅽ??쇰쭅
-- **?먮룞 濡쒕뱶**: KIGAM 吏?ㅻ퉭?곗씠???ㅽ뵂?뚮옯?쇱뿉???ㅼ슫濡쒕뱶??ZIP ?뚯씪??吏곸젒 ?좏깮?섏뿬 ?꾨줈?앺듃??利됱떆 異붽??⑸땲??
-- **怨좉퀬???ㅽ????곸슜**: 吏吏덈룄 ?덉씠?댁쓽 吏痢?肄붾뱶(`LITHOIDX`, `AGEIDX`)瑜?湲곕컲?쇰줈 ?쒖??붾맂 而щ윭 ?ㅽ??쇨낵 ?고듃 ?ㅼ젙???먮룞?쇰줈 ?곸슜?⑸땲??
-- **?덉씠???몃━ ?뺣━**: 愿???덉씠?대뱾??洹몃９?뷀븯???쒓컖?곸쑝濡?源붾걫?섍쾶 援ъ꽦?⑸땲??
+### 1. 지질도 ZIP 로드 + 심볼링
+- ZIP 다중 선택 로드 지원
+- 로드 후 플러그인 창을 자동으로 닫지 않음
+- ZIP별로 **독립 그룹** 생성 (이전 로드 그룹과 혼합 방지)
+- `sym` 폴더 PNG와 레이어 속성값 자동 매칭
+- `qml`의 `imageFile` 경로를 추출 경로로 자동 relink
+- 인코딩 후보를 비교해 로딩하며 `CP949/EUC-KR` 우선 처리
 
-### 2. 吏援ы솕??遺꾩꽍 (GeoChem RGB to Value)
-- **?섏튂???꾧뎄**: WMS/WFS濡??쒓났?섎뒗 吏援ы솕?숇룄???됱긽(RGB) ?뺣낫瑜??ㅼ젣 痢≪젙媛?Value)?쇰줈 ?뺣??섍쾶 蹂?섑빀?덈떎.
-- **怨쇳븰???꾨━??*: `lzpxilfe/ar` (ArchToolkit) 由ы룷吏?좊━??理쒖떊 ?곗씠?곕? 湲곕컲?쇰줈 **泥?Fe), ??Pb), 援щ━(Cu), ?꾩뿰(Zn), ?ㅽ듃濡좏뒳(Sr), 諛붾ⅷ(Ba), 移쇱뒛(CaO)** ??7媛??먯냼??怨쇳븰??諛깅텇???먯닔(Scientific Percentile Ramp)瑜?吏?먰빀?덈떎.
+### 2. GeoChem RGB -> Value 변환
+- WMS 래스터 RGB 색상을 수치 래스터로 변환
+- Fe2O3, Pb, Cu, Zn, Sr, Ba, CaO 프리셋 제공
+- 대상지 레이어 범위 + 해상도 기반 출력
 
-### 3. MaxEnt??遺꾩꽍 蹂???앹꽦 (Rasterize / ASC)
-- **蹂??異붿텧**: ?щ윭 吏吏덈룄 ?덉씠???먮뒗 ?섏튂?붾맂 吏援ы솕?숇룄 ?덉씠?대? ?좏깮?섏뿬 MaxEnt 遺꾩꽍 ???ㅼ뼇???⑸룄??**GeoTIFF/ASCII Grid** ?섏뒪???뺤떇?쇰줈 ?대낫?낅땲??
-- **?먮룞 蹂묓빀**: ?щ윭 媛쒖쓽 吏吏덈룄 踰≫꽣 ?덉씠?대? ?좏깮?섎㈃ ?먮룞?쇰줈 ?섎굹???덉씠?대줈 蹂묓빀?섏뿬 ?⑥씪 ?섏뒪???뚯씪濡??앹꽦?⑸땲??
+### 3. Rasterize / Export
+- 지질도 벡터(`LITHOIDX`) 래스터화
+- 수치화 래스터 GeoTIFF/ASC 저장
 
-## ?ㅼ튂 諛??ъ슜 諛⑸쾿 (Installation & Usage)
+## 설치
 
-### ?ㅼ튂 (Installation)
-1. **GitHub Release**: [Releases](https://github.com/lzpxilfe/KIGAM-for-Archaeology/releases) ?섏씠吏?먯꽌 理쒖떊 `KigamGeoDownloader.zip` ?뚯씪???ㅼ슫濡쒕뱶?⑸땲??
-2. **QGIS ?뚮윭洹몄씤 ?ㅼ튂**:
-    - QGIS 硫붾돱: `?뚮윭洹몄씤` > `?뚮윭洹몄씤 愿由?諛??ㅼ튂` > `ZIP ?뚯씪?먯꽌 ?ㅼ튂`
-    - ?ㅼ슫濡쒕뱶??ZIP ?뚯씪???좏깮?섏뿬 ?ㅼ튂?⑸땲??
-3. **吏곸젒 ?ㅼ튂 (媛쒕컻?먯슜)**: 蹂?由ы룷吏?좊━瑜??대줎?섏뿬 QGIS ?꾨줈???대뜑(`.../python/plugins/`)??`KigamGeoDownloader` ?대뜑瑜?蹂듭궗?⑸땲??
+### QGIS에서 ZIP 설치
+1. GitHub Releases에서 플러그인 ZIP 다운로드
+2. QGIS 메뉴 `플러그인 > 플러그인 관리 및 설치 > ZIP 파일에서 설치`
+3. 다운로드한 ZIP 선택
 
-### ?ъ슜 諛⑸쾿 (Usage)
-1. **?ㅽ뻾**: QGIS ?곷떒 ?대컮???꾩씠肄??먮뒗 硫붾돱?먯꽌 `KIGAM Tools`瑜??ㅽ뻾?⑸땲??
-2. **?곗씠??以鍮?*: KIGAM ?뱀궗?댄듃?먯꽌 1:50,000 吏吏덈룄 ZIP ?뚯씪???ㅼ슫濡쒕뱶?⑸땲??
-3. **?꾩?留?*: ?뚮윭洹몄씤 ?섎떒??**?꾩?留?(?)** 踰꾪듉???대┃?섎㈃ ?곸꽭???ъ슜 媛?대뱶瑜??뺤씤?????덉뒿?덈떎.
+### 개발 설치
+1. 저장소를 클론
+2. `KigamGeoDownloader` 폴더를 QGIS 플러그인 경로에 복사
+3. QGIS 재시작 후 플러그인 활성화
 
-## 媛쒕컻 諛?李멸퀬 (For Developers)
+## 사용 방법
 
-???뚮윭洹몄씤? **ArchToolkit (lzpxilfe/ar)** 媛쒕컻 濡쒖쭅怨쇱쓽 ?명솚?깆쓣 怨좊젮?섏뿬 ?쒖옉?섏뿀?듬땲?? ?뱁엳 吏援ы솕???섏튂???뚭퀬由ъ쬁? 怨듭떇?곸씤 諛깅텇?꾩닔 ?깃툒 援щ텇???곕쫭?덈떎.
+1. QGIS에서 `KIGAM Tools` 실행
+2. `2. 지질도 불러오기`에서 ZIP 1개 이상 선택 후 로드
+3. `3. 지구화학 분석`에서 WMS/프리셋/대상지/해상도 선택 후 변환
+4. `4. 래스터 변환 및 내보내기`에서 분석용 래스터 저장
 
-## ?뙚 Citation & Star
+## 트러블슈팅
 
-???뚮윭洹몄씤???좎슜?덈떎硫?**GitHub Star 狩?*瑜??뚮윭二쇱꽭?? 媛쒕컻?먯뿉寃????섏씠 ?⑸땲??
+- 로그 패널에 `Plugin runtime: ... (version ...)`가 표시됩니다.
+  - 실제 실행 중인 플러그인 경로/버전 확인용입니다.
+- `?` 심볼/라벨이 보이면:
+  - ZIP 내부 `sym` 폴더 존재 여부 확인
+  - 해당 레이어 `.qml` 존재 여부 확인
+  - 인코딩이 강제로 UTF-8로 고정되지 않았는지 확인
+- ZIP을 여러 개 불러올 때 그룹이 합쳐지면:
+  - 최신 버전(0.1.3) 적용 여부를 먼저 확인하세요.
 
-If you find this repository useful, please consider giving it a **star 狩?* and citing it in your work:
+## 개발/패키징
+
+```bash
+python create_package.py
+```
+
+`metadata.txt`의 버전을 읽어 바탕화면에 `KIGAM_for_Archaeology_v<version>.zip`를 생성합니다.
+
+## Citation
+
+이 저장소에는 `CITATION.cff`가 포함되어 있습니다.  
+학술/보고서 인용 시 `CITATION.cff` 또는 아래 BibTeX를 사용하세요.
 
 ```bibtex
 @software{kigam_for_archaeology,
-  author = {lzpxilfe},
-  title = {KIGAM for Archaeology: QGIS Plugin for Geological Map Analysis},
+  author = {balguljang2 (lzpxilfe)},
+  title = {KIGAM for Archaeology: QGIS Plugin for Geological Map and GeoChem Workflows},
   year = {2026},
   url = {https://github.com/lzpxilfe/KIGAM-for-Archaeology}
 }
 ```
 
----
-짤 2026 balguljang2(lzpxilfe). Licensed under **GNU GPL v3**.
+## Star 부탁
 
+프로젝트가 도움이 되었다면 GitHub Star를 부탁드립니다.  
+짧은 사용 피드백이나 이슈 리포트도 큰 도움이 됩니다.
+
+자세한 문구는 `SUPPORT.md`를 참고하세요.
+
+## License
+
+GNU GPL v3

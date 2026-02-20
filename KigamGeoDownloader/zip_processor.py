@@ -279,14 +279,15 @@ class ZipProcessor:
 
     @staticmethod
     def _encoding_preference_rank(encoding):
-        # Prefer default provider behavior first, then UTF-8, then Korean legacy encodings.
+        # KIGAM shapefiles are predominantly CP949/EUC-KR encoded.
+        # Prefer Korean legacy encodings on tie to avoid mojibake labels/category values.
         order = {
-            None: 3,
-            "UTF-8": 2,
-            "CP949": 1,
-            "EUC-KR": 0
+            "CP949": 4,
+            "EUC-KR": 3,
+            None: 2,
+            "UTF-8": 1,
         }
-        return order.get(encoding, -1)
+        return order.get(encoding, 0)
 
     def _load_layer_with_best_encoding(self, shp_path, layer_name, sym_path=None, qml_path=None):
         raw_sym_files, normalized_sym_files = self._build_symbol_index(sym_path) if sym_path else ({}, {})
@@ -298,7 +299,7 @@ class ZipProcessor:
                 if candidate not in qml_normalized_map:
                     qml_normalized_map[candidate] = image_stem
 
-        candidate_encodings = [None, "UTF-8", "CP949", "EUC-KR"]
+        candidate_encodings = ["CP949", "EUC-KR", None, "UTF-8"]
         best_layer = None
         best_encoding = None
         best_field = None
@@ -393,6 +394,15 @@ class ZipProcessor:
 
         return True
 
+    @staticmethod
+    def _build_unique_group_name(root, base_name):
+        unique_group_name = base_name
+        suffix = 2
+        while root.findGroup(unique_group_name) is not None:
+            unique_group_name = f"{base_name}_{suffix}"
+            suffix += 1
+        return unique_group_name
+
     def process_zip(self, zip_path, font_family="Malgun Gothic", font_size=10):
         """
         Extracts ZIP, loads shapefiles, and applies styling.
@@ -408,7 +418,7 @@ class ZipProcessor:
                 zip_ref.extractall(extract_dir)
         except Exception as e:
             QgsMessageLog.logMessage(f"Failed to extract ZIP: {str(e)}", "KIGAM Plugin", Qgis.Critical)
-            return
+            return []
 
         # Locate 'sym' folder
         sym_path = None
@@ -424,6 +434,7 @@ class ZipProcessor:
         # Load Shapefiles
         tree_root = QgsProject.instance().layerTreeRoot()
         loaded_layers = []
+        target_group = None
         for root, dirs, files in os.walk(extract_dir):
             for file in files:
                 if file.lower().endswith(".shp"):
@@ -451,11 +462,20 @@ class ZipProcessor:
                         "KIGAM Plugin",
                         Qgis.Info
                     )
-                    
-                    # Add to project without auto-placement, then place at root explicitly.
-                    # This avoids inheriting the currently selected layer-tree group.
+
+                    if target_group is None:
+                        unique_group_name = self._build_unique_group_name(tree_root, zip_basename)
+                        target_group = tree_root.addGroup(unique_group_name)
+                        QgsMessageLog.logMessage(
+                            f"Created layer group: {unique_group_name}",
+                            "KIGAM Plugin",
+                            Qgis.Info
+                        )
+
+                    # Add to project without auto-placement, then place directly in this ZIP group.
+                    # This avoids inheriting currently selected layer-tree insertion context.
                     QgsProject.instance().addMapLayer(layer, False)
-                    tree_root.addLayer(layer)
+                    target_group.addLayer(layer)
                     loaded_layers.append(layer)
 
                     # Apply Styling if sym path exists
@@ -466,9 +486,9 @@ class ZipProcessor:
                     if 'Litho' in layer_name:
                          self.apply_labeling(layer, font_family, font_size)
 
-        # Reorder and Organize into Group
-        # Use simple heuristics to guess a region name if possible, or just use ZIP name
-        self.organize_layers(loaded_layers, zip_basename)
+        # Reorder inside the dedicated group.
+        if target_group is not None and loaded_layers:
+            self.organize_layers(target_group, loaded_layers)
 
         return loaded_layers
 
@@ -495,6 +515,12 @@ class ZipProcessor:
                 Qgis.Success
             )
             return
+        if relinked_qml:
+            QgsMessageLog.logMessage(
+                f"Failed to apply relinked QML to {layer.name()}, falling back to sym-based renderer",
+                "KIGAM Plugin",
+                Qgis.Warning
+            )
 
         qml_field, qml_value_to_image = self._parse_qml_mapping(qml_path)
 
@@ -628,47 +654,16 @@ class ZipProcessor:
         layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
         layer.setLabelsEnabled(True)
 
-    def organize_layers(self, layers, group_name="KIGAM Map"):
+    def organize_layers(self, group, layers):
         """
-        Organize layers in TOC:
-        1. Create Group 'group_name'
+        Organize layers in an existing ZIP group:
         2. Points (Top)
         3. Lines (Middle)
         4. Polygons (Bottom)
         5. Reference/Frame (Very Bottom, Hidden)
         """
-        root = QgsProject.instance().layerTreeRoot()
-        
-        # Avoid any accidental merge into an existing group.
-        unique_group_name = group_name
-        suffix = 2
-        while True:
-            duplicate = False
-            try:
-                # findGroup checks recursively and is safer than root-only name checks.
-                if root.findGroup(unique_group_name) is not None:
-                    duplicate = True
-            except Exception:
-                # Fallback for environments where findGroup may behave differently.
-                existing_names = set()
-                for child in root.children():
-                    if hasattr(child, "name"):
-                        existing_names.add(str(child.name()).strip())
-                duplicate = str(unique_group_name).strip() in existing_names
-
-            if not duplicate:
-                break
-
-            unique_group_name = f"{group_name}_{suffix}"
-            suffix += 1
-        
-        # Create Group
-        group = root.addGroup(unique_group_name)
-        QgsMessageLog.logMessage(
-            f"Created layer group: {unique_group_name}",
-            "KIGAM Plugin",
-            Qgis.Info
-        )
+        if group is None or not layers:
+            return
 
         # Separate layers by type/role
         points = []
@@ -692,7 +687,7 @@ class ZipProcessor:
         all_ordered = reference + polygons + lines + points
         
         for layer in all_ordered:
-            node = root.findLayer(layer.id())
+            node = group.findLayer(layer.id())
             if node:
                 # Move into group
                 clone = node.clone()
@@ -709,9 +704,7 @@ class ZipProcessor:
                 # So the order at 0 will be Points. Correct.
                 
                 group.insertChildNode(0, clone)
-                parent_node = node.parent()
-                if parent_node:
-                    parent_node.removeChildNode(node)
+                group.removeChildNode(node)
                 
                 # Check visibility for reference layers
                 if layer in reference:
