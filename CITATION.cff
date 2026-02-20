@@ -4,7 +4,7 @@ title: "KIGAM for Archaeology"
 type: software
 version: "0.1.1"
 date-released: 2026-02-20
-license: GPL-3.0-or-later
+license: GPL-2.0-only
 authors:
   - family-names: "balguljang2"
     given-names: "lzpxilfe"

@@ -20,6 +20,7 @@ KIGAM 1:50,000 수치지질도 ZIP을 QGIS로 불러오고, `sym`/`qml` 기반 �
 ### 3. Rasterize / Export
 - 지질도 벡터(설정된 후보 필드) 래스터화
 - 수치화 래스터 GeoTIFF/ASC 저장
+- 래스터 레이어를 여러 개 선택한 경우 현재는 첫 번째 레이어 1개만 내보냄
 
 ## 설치
 
@@ -94,4 +95,4 @@ python create_package.py
 
 ## License
 
-GNU GPL v3
+GNU GPL v2
