@@ -471,30 +471,30 @@ class MainDialog(QDialog):
 
             # C. If they selected Rasters
             if raster_layers:
-                # If multiple rasters, we just export the first one to the save_path for now
-                # as the UI only asks for ONE save_path.
-                # Better: Export them as separate files in a directory if multiple?
-                # The user's request: "변수 생성할 수 있게 해주고"
+                if len(raster_layers) > 1:
+                    self.log(f"[INFO] 래스터 {len(raster_layers)}개 선택됨. 첫 번째 레이어만 내보냅니다: {raster_layers[0].name()}")
+
                 r_layer = raster_layers[0]
-                params = {
+
+                extent = r_layer.extent()
+                extent_str = f"{extent.xMinimum()},{extent.xMaximum()},{extent.yMinimum()},{extent.yMaximum()}"
+                target_crs = r_layer.crs().authid() if r_layer.crs() and r_layer.crs().isValid() else None
+                warp_params = {
                     'INPUT': r_layer,
-                    'OUTPUT': save_path,
-                    'RESOLUTION': resolution,
-                    'RESAMPLING': 0, # Nearest Neighbour
-                    'DATA_TYPE': 5
-                }
-                # Use gdal:translate for resampling
-                translate_params = {
-                    'INPUT': r_layer,
-                    'TARGET_CRS': r_layer.crs(),
+                    'SOURCE_CRS': None,
+                    'TARGET_CRS': target_crs,
+                    'RESAMPLING': 0,  # Nearest Neighbour
                     'NODATA': -9999,
-                    'COPY_SUBDATASETS': False,
+                    'TARGET_RESOLUTION': resolution,
                     'OPTIONS': '',
                     'DATA_TYPE': 5,
+                    'TARGET_EXTENT': extent_str,
+                    'TARGET_EXTENT_CRS': target_crs,
+                    'MULTITHREADING': False,
+                    'EXTRA': '',
                     'OUTPUT': save_path
                 }
-                # Add resolution override if possible or use warp
-                processing.run("gdal:translate", translate_params)
+                processing.run("gdal:warpreproject", warp_params)
                 QMessageBox.information(self, "성공", f"래스터 내보내기가 완료되었습니다:\n{save_path}")
 
         except Exception as e:
