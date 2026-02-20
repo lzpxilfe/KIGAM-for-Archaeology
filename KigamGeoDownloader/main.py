@@ -70,7 +70,7 @@ class MainDialog(QDialog):
         
         self.load_btn = QPushButton("자동 로드 및 스타일 적용")
         self.load_btn.setToolTip("ZIP 압축을 해제하고 SHP 파일을 로드한 뒤 표준 심볼과 라벨을 적용합니다.")
-        self.load_btn.clicked.connect(self.accept)
+        self.load_btn.clicked.connect(self.load_selected_zips)
         load_layout.addRow("", self.load_btn)
         
         load_group.setLayout(load_layout)
@@ -282,14 +282,112 @@ class MainDialog(QDialog):
         QDesktopServices.openUrl(QUrl("https://data.kigam.re.kr/search?subject=Geology"))
 
     def browse_zip_file(self):
-        zip_path, _ = QFileDialog.getOpenFileName(
+        zip_paths, _ = QFileDialog.getOpenFileNames(
             self,
             "KIGAM ZIP 파일 선택",
             "",
             "ZIP Files (*.zip *.ZIP)"
         )
-        if zip_path:
-            self.file_input.setText(zip_path)
+        if zip_paths:
+            self.file_input.setText("; ".join(zip_paths))
+
+    def _collect_zip_paths(self):
+        raw_text = self.file_input.text().strip()
+        if not raw_text:
+            return []
+
+        parts = raw_text.replace("\n", ";").split(";")
+        zip_paths = []
+        seen = set()
+        for part in parts:
+            path = part.strip().strip('"').strip("'")
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            zip_paths.append(path)
+        return zip_paths
+
+    def _zoom_to_loaded_layers(self, loaded_layers):
+        frame_layer = next((l for l in loaded_layers if 'frame' in l.name().lower()), None)
+        target_layer = frame_layer if frame_layer else loaded_layers[0]
+
+        if target_layer.isValid():
+            canvas = self.iface.mapCanvas()
+            canvas.setExtent(target_layer.extent())
+            canvas.refresh()
+
+    def load_selected_zips(self):
+        """
+        Load one or multiple ZIP files without closing the dialog.
+        """
+        zip_paths = self._collect_zip_paths()
+        if not zip_paths:
+            QMessageBox.warning(self, "Warning", "Please select one or more ZIP files.")
+            return
+
+        # Runtime trace to confirm which installed plugin copy is executing.
+        plugin_dir = os.path.dirname(__file__)
+        version = "unknown"
+        metadata_path = os.path.join(plugin_dir, "metadata.txt")
+        try:
+            with open(metadata_path, "r", encoding="utf-8", errors="ignore") as fp:
+                for line in fp:
+                    if line.startswith("version="):
+                        version = line.split("=", 1)[1].strip()
+                        break
+        except Exception:
+            pass
+        self.log(f"Plugin runtime: {plugin_dir} (version {version})")
+
+        self.load_btn.setEnabled(False)
+        self.browse_btn.setEnabled(False)
+
+        processor = ZipProcessor()
+        loaded_zip_count = 0
+        total_layer_count = 0
+        failed_paths = []
+        last_loaded_layers = None
+
+        try:
+            for idx, zip_path in enumerate(zip_paths, start=1):
+                if not os.path.exists(zip_path):
+                    failed_paths.append(zip_path)
+                    self.log(f"[{idx}/{len(zip_paths)}] Missing ZIP: {zip_path}")
+                    continue
+
+                self.log(f"[{idx}/{len(zip_paths)}] Loading ZIP: {zip_path}")
+                loaded_layers = processor.process_zip(
+                    zip_path,
+                    font_family=self.font_combo.currentFont().family(),
+                    font_size=self.size_spin.value()
+                )
+
+                if loaded_layers:
+                    loaded_zip_count += 1
+                    total_layer_count += len(loaded_layers)
+                    last_loaded_layers = loaded_layers
+                    self.log(f"  -> Loaded {len(loaded_layers)} layer(s)")
+                else:
+                    failed_paths.append(zip_path)
+                    self.log("  -> No layers loaded")
+
+            if last_loaded_layers:
+                self._zoom_to_loaded_layers(last_loaded_layers)
+
+            # Keep UI current for follow-up work in the same dialog.
+            self.refresh_layer_list()
+            self.refresh_geochem_layer_combos()
+
+            if loaded_zip_count > 0:
+                msg = f"{loaded_zip_count}/{len(zip_paths)} ZIP loaded, total {total_layer_count} layers."
+                if failed_paths:
+                    msg += f"\nFailed: {len(failed_paths)}"
+                QMessageBox.information(self, "Success", msg)
+            else:
+                QMessageBox.warning(self, "Warning", "No layers were loaded. Check the log panel for details.")
+        finally:
+            self.load_btn.setEnabled(True)
+            self.browse_btn.setEnabled(True)
 
     def export_maxent_raster(self):
         """
@@ -675,39 +773,4 @@ class KigamGeoDownloader:
     def run(self):
         # Show Main Dialog
         dialog = MainDialog(self.iface.mainWindow(), self.iface)
-        if dialog.exec_() != QDialog.Accepted:
-            return
-            
-        settings = dialog.get_settings()
-        zip_path = settings['zip_path']
-        
-        if not zip_path:
-            QMessageBox.warning(self.iface.mainWindow(), "경고", "ZIP 파일을 선택해주세요.")
-            return
-
-        if not os.path.exists(zip_path):
-             QMessageBox.warning(self.iface.mainWindow(), "경고", "선택한 파일이 존재하지 않습니다.")
-             return
-
-        processor = ZipProcessor()
-        # Pass settings to processor
-        loaded_layers = processor.process_zip(
-            zip_path, 
-            font_family=settings['font_family'], 
-            font_size=settings['font_size']
-        )
-        
-        if loaded_layers:
-            # Zoom to Frame layer
-            frame_layer = next((l for l in loaded_layers if 'frame' in l.name().lower()), None)
-            target_layer = frame_layer if frame_layer else loaded_layers[0]
-            
-            if target_layer.isValid():
-                canvas = self.iface.mapCanvas()
-                canvas.setExtent(target_layer.extent())
-                canvas.refresh()
-
-            QMessageBox.information(self.iface.mainWindow(), "성공", f"ZIP 파일에서 {len(loaded_layers)}개의 레이어를 로드했습니다.")
-        else:
-            QMessageBox.warning(self.iface.mainWindow(), "경고", "로드된 레이어가 없습니다. 로그 메시지를 확인하세요.")
-
+        dialog.exec_()

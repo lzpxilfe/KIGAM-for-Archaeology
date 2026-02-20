@@ -1,4 +1,4 @@
-import os
+﻿import os
 import zipfile
 import sys
 
@@ -56,6 +56,7 @@ if __name__ == "__main__":
     else:
         # Default to Desktop
         desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-        output_path = os.path.join(desktop, "KIGAM_for_Archaeology_v0.1.0.zip")
+        output_path = os.path.join(desktop, "KIGAM_for_Archaeology_v0.1.2.zip")
         
     create_plugin_zip(output_path)
+

@@ -1,45 +1,45 @@
-# KIGAM for Archaeology (QGIS Plugin) v0.1.0
+﻿# KIGAM for Archaeology (QGIS Plugin) v0.1.2
 
-한국지질자원연구원(KIGAM)의 1:50,000 지질도 데이터를 고고학 연구 환경에 최적화하여 활용할 수 있도록 돕는 QGIS 플러그인입니다.
+?쒓뎅吏吏덉옄?먯뿰援ъ썝(KIGAM)??1:50,000 吏吏덈룄 ?곗씠?곕? 怨좉퀬???곌뎄 ?섍꼍??理쒖쟻?뷀븯???쒖슜?????덈룄濡??뺣뒗 QGIS ?뚮윭洹몄씤?낅땲??
 
-## 주요 기능 (Key Features)
+## 二쇱슂 湲곕뒫 (Key Features)
 
-### 1. 지질도 자동 로드 및 스타일링
-- **자동 로드**: KIGAM 지오빅데이터 오픈플랫폼에서 다운로드한 ZIP 파일을 직접 선택하여 프로젝트에 즉시 추가합니다.
-- **고고학 스타일 적용**: 지질도 레이어의 지층 코드(`LITHOIDX`, `AGEIDX`)를 기반으로 표준화된 컬러 스타일과 폰트 설정을 자동으로 적용합니다.
-- **레이어 트리 정리**: 관련 레이어들을 그룹화하여 시각적으로 깔끔하게 구성합니다.
+### 1. 吏吏덈룄 ?먮룞 濡쒕뱶 諛??ㅽ??쇰쭅
+- **?먮룞 濡쒕뱶**: KIGAM 吏?ㅻ퉭?곗씠???ㅽ뵂?뚮옯?쇱뿉???ㅼ슫濡쒕뱶??ZIP ?뚯씪??吏곸젒 ?좏깮?섏뿬 ?꾨줈?앺듃??利됱떆 異붽??⑸땲??
+- **怨좉퀬???ㅽ????곸슜**: 吏吏덈룄 ?덉씠?댁쓽 吏痢?肄붾뱶(`LITHOIDX`, `AGEIDX`)瑜?湲곕컲?쇰줈 ?쒖??붾맂 而щ윭 ?ㅽ??쇨낵 ?고듃 ?ㅼ젙???먮룞?쇰줈 ?곸슜?⑸땲??
+- **?덉씠???몃━ ?뺣━**: 愿???덉씠?대뱾??洹몃９?뷀븯???쒓컖?곸쑝濡?源붾걫?섍쾶 援ъ꽦?⑸땲??
 
-### 2. 지구화학 분석 (GeoChem RGB to Value)
-- **수치화 도구**: WMS/WFS로 제공되는 지구화학도의 색상(RGB) 정보를 실제 측정값(Value)으로 정밀하게 변환합니다.
-- **과학적 프리셋**: `lzpxilfe/ar` (ArchToolkit) 리포지토리의 최신 데이터를 기반으로 **철(Fe), 납(Pb), 구리(Cu), 아연(Zn), 스트론튬(Sr), 바륨(Ba), 칼슘(CaO)** 등 7개 원소의 과학적 백분위 점수(Scientific Percentile Ramp)를 지원합니다.
+### 2. 吏援ы솕??遺꾩꽍 (GeoChem RGB to Value)
+- **?섏튂???꾧뎄**: WMS/WFS濡??쒓났?섎뒗 吏援ы솕?숇룄???됱긽(RGB) ?뺣낫瑜??ㅼ젣 痢≪젙媛?Value)?쇰줈 ?뺣??섍쾶 蹂?섑빀?덈떎.
+- **怨쇳븰???꾨━??*: `lzpxilfe/ar` (ArchToolkit) 由ы룷吏?좊━??理쒖떊 ?곗씠?곕? 湲곕컲?쇰줈 **泥?Fe), ??Pb), 援щ━(Cu), ?꾩뿰(Zn), ?ㅽ듃濡좏뒳(Sr), 諛붾ⅷ(Ba), 移쇱뒛(CaO)** ??7媛??먯냼??怨쇳븰??諛깅텇???먯닔(Scientific Percentile Ramp)瑜?吏?먰빀?덈떎.
 
-### 3. MaxEnt용 분석 변수 생성 (Rasterize / ASC)
-- **변수 추출**: 여러 지질도 레이어 또는 수치화된 지구화학도 레이어를 선택하여 MaxEnt 분석 등 다양한 용도의 **GeoTIFF/ASCII Grid** 래스터 형식으로 내보냅니다.
-- **자동 병합**: 여러 개의 지질도 벡터 레이어를 선택하면 자동으로 하나의 레이어로 병합하여 단일 래스터 파일로 생성합니다.
+### 3. MaxEnt??遺꾩꽍 蹂???앹꽦 (Rasterize / ASC)
+- **蹂??異붿텧**: ?щ윭 吏吏덈룄 ?덉씠???먮뒗 ?섏튂?붾맂 吏援ы솕?숇룄 ?덉씠?대? ?좏깮?섏뿬 MaxEnt 遺꾩꽍 ???ㅼ뼇???⑸룄??**GeoTIFF/ASCII Grid** ?섏뒪???뺤떇?쇰줈 ?대낫?낅땲??
+- **?먮룞 蹂묓빀**: ?щ윭 媛쒖쓽 吏吏덈룄 踰≫꽣 ?덉씠?대? ?좏깮?섎㈃ ?먮룞?쇰줈 ?섎굹???덉씠?대줈 蹂묓빀?섏뿬 ?⑥씪 ?섏뒪???뚯씪濡??앹꽦?⑸땲??
 
-## 설치 및 사용 방법 (Installation & Usage)
+## ?ㅼ튂 諛??ъ슜 諛⑸쾿 (Installation & Usage)
 
-### 설치 (Installation)
-1. **GitHub Release**: [Releases](https://github.com/lzpxilfe/KIGAM-for-Archaeology/releases) 페이지에서 최신 `KigamGeoDownloader.zip` 파일을 다운로드합니다.
-2. **QGIS 플러그인 설치**:
-    - QGIS 메뉴: `플러그인` > `플러그인 관리 및 설치` > `ZIP 파일에서 설치`
-    - 다운로드한 ZIP 파일을 선택하여 설치합니다.
-3. **직접 설치 (개발자용)**: 본 리포지토리를 클론하여 QGIS 프로필 폴더(`.../python/plugins/`)에 `KigamGeoDownloader` 폴더를 복사합니다.
+### ?ㅼ튂 (Installation)
+1. **GitHub Release**: [Releases](https://github.com/lzpxilfe/KIGAM-for-Archaeology/releases) ?섏씠吏?먯꽌 理쒖떊 `KigamGeoDownloader.zip` ?뚯씪???ㅼ슫濡쒕뱶?⑸땲??
+2. **QGIS ?뚮윭洹몄씤 ?ㅼ튂**:
+    - QGIS 硫붾돱: `?뚮윭洹몄씤` > `?뚮윭洹몄씤 愿由?諛??ㅼ튂` > `ZIP ?뚯씪?먯꽌 ?ㅼ튂`
+    - ?ㅼ슫濡쒕뱶??ZIP ?뚯씪???좏깮?섏뿬 ?ㅼ튂?⑸땲??
+3. **吏곸젒 ?ㅼ튂 (媛쒕컻?먯슜)**: 蹂?由ы룷吏?좊━瑜??대줎?섏뿬 QGIS ?꾨줈???대뜑(`.../python/plugins/`)??`KigamGeoDownloader` ?대뜑瑜?蹂듭궗?⑸땲??
 
-### 사용 방법 (Usage)
-1. **실행**: QGIS 상단 툴바의 아이콘 또는 메뉴에서 `KIGAM Tools`를 실행합니다.
-2. **데이터 준비**: KIGAM 웹사이트에서 1:50,000 지질도 ZIP 파일을 다운로드합니다.
-3. **도움말**: 플러그인 하단의 **도움말 (?)** 버튼을 클릭하면 상세한 사용 가이드를 확인할 수 있습니다.
+### ?ъ슜 諛⑸쾿 (Usage)
+1. **?ㅽ뻾**: QGIS ?곷떒 ?대컮???꾩씠肄??먮뒗 硫붾돱?먯꽌 `KIGAM Tools`瑜??ㅽ뻾?⑸땲??
+2. **?곗씠??以鍮?*: KIGAM ?뱀궗?댄듃?먯꽌 1:50,000 吏吏덈룄 ZIP ?뚯씪???ㅼ슫濡쒕뱶?⑸땲??
+3. **?꾩?留?*: ?뚮윭洹몄씤 ?섎떒??**?꾩?留?(?)** 踰꾪듉???대┃?섎㈃ ?곸꽭???ъ슜 媛?대뱶瑜??뺤씤?????덉뒿?덈떎.
 
-## 개발 및 참고 (For Developers)
+## 媛쒕컻 諛?李멸퀬 (For Developers)
 
-이 플러그인은 **ArchToolkit (lzpxilfe/ar)** 개발 로직과의 호환성을 고려하여 제작되었습니다. 특히 지구화학 수치화 알고리즘은 공식적인 백분위수 등급 구분을 따릅니다.
+???뚮윭洹몄씤? **ArchToolkit (lzpxilfe/ar)** 媛쒕컻 濡쒖쭅怨쇱쓽 ?명솚?깆쓣 怨좊젮?섏뿬 ?쒖옉?섏뿀?듬땲?? ?뱁엳 吏援ы솕???섏튂???뚭퀬由ъ쬁? 怨듭떇?곸씤 諛깅텇?꾩닔 ?깃툒 援щ텇???곕쫭?덈떎.
 
-## 🌟 Citation & Star
+## ?뙚 Citation & Star
 
-이 플러그인이 유용했다면 **GitHub Star ⭐**를 눌러주세요! 개발자에게 큰 힘이 됩니다.
+???뚮윭洹몄씤???좎슜?덈떎硫?**GitHub Star 狩?*瑜??뚮윭二쇱꽭?? 媛쒕컻?먯뿉寃????섏씠 ?⑸땲??
 
-If you find this repository useful, please consider giving it a **star ⭐** and citing it in your work:
+If you find this repository useful, please consider giving it a **star 狩?* and citing it in your work:
 
 ```bibtex
 @software{kigam_for_archaeology,
@@ -51,4 +51,5 @@ If you find this repository useful, please consider giving it a **star ⭐** and
 ```
 
 ---
-© 2026 balguljang2(lzpxilfe). Licensed under **GNU GPL v3**.
+짤 2026 balguljang2(lzpxilfe). Licensed under **GNU GPL v3**.
+
