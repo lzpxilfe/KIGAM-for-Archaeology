@@ -6,7 +6,7 @@ from qgis.PyQt.QtWidgets import (
     QPushButton, QLineEdit, QGroupBox, QFormLayout, QComboBox,
     QListWidget, QListWidgetItem, QTextEdit
 )
-from qgis.PyQt.QtGui import QIcon, QDesktopServices
+from qgis.PyQt.QtGui import QIcon, QDesktopServices, QFont
 from qgis.core import QgsProject, QgsVectorLayer, QgsCoordinateTransform
 import processing
 
@@ -18,6 +18,147 @@ import numpy as np
 from osgeo import gdal
 from .zip_processor import ZipProcessor
 from . import geochem_utils
+from .plugin_config import PLUGIN_CONFIG, DEFAULT_PLUGIN_CONFIG
+
+
+def _cfg_int(value, default):
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+def _cfg_float(value, default):
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _cfg_str(value, default):
+    text = str(value).strip() if value is not None else ""
+    return text or str(default)
+
+
+def _cfg_str_list(value, default):
+    if not isinstance(value, list):
+        return list(default)
+    parsed = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if text:
+            parsed.append(text)
+    return parsed or list(default)
+
+
+def _cfg_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in ("1", "true", "yes", "y", "on"):
+            return True
+        if text in ("0", "false", "no", "n", "off", ""):
+            return False
+    return bool(default)
+
+
+UI_CONFIG = PLUGIN_CONFIG.get("ui", {})
+ZIP_CONFIG = PLUGIN_CONFIG.get("zip_processor", {})
+RASTER_CONFIG = PLUGIN_CONFIG.get("raster", {})
+DEFAULT_UI_CONFIG = DEFAULT_PLUGIN_CONFIG.get("ui", {})
+DEFAULT_ZIP_CONFIG = DEFAULT_PLUGIN_CONFIG.get("zip_processor", {})
+DEFAULT_RASTER_CONFIG = DEFAULT_PLUGIN_CONFIG.get("raster", {})
+LABEL_FONT_CONFIG = UI_CONFIG.get("label_font", {})
+GEOCHEM_RES_CONFIG = UI_CONFIG.get("geochem_resolution", {})
+EXPORT_RES_CONFIG = UI_CONFIG.get("export_resolution", {})
+DEFAULT_LABEL_FONT_CONFIG = DEFAULT_UI_CONFIG.get("label_font", {})
+DEFAULT_GEOCHEM_RES_CONFIG = DEFAULT_UI_CONFIG.get("geochem_resolution", {})
+DEFAULT_EXPORT_RES_CONFIG = DEFAULT_UI_CONFIG.get("export_resolution", {})
+
+DEFAULT_LABEL_FONT_FAMILY = _cfg_str(
+    LABEL_FONT_CONFIG.get("default_family"),
+    DEFAULT_LABEL_FONT_CONFIG.get("default_family", "Malgun Gothic"),
+)
+LABEL_FONT_SIZE_MIN = _cfg_int(
+    LABEL_FONT_CONFIG.get("size_min"),
+    DEFAULT_LABEL_FONT_CONFIG.get("size_min", 5),
+)
+LABEL_FONT_SIZE_MAX = _cfg_int(
+    LABEL_FONT_CONFIG.get("size_max"),
+    DEFAULT_LABEL_FONT_CONFIG.get("size_max", 50),
+)
+LABEL_FONT_SIZE_DEFAULT = _cfg_int(
+    LABEL_FONT_CONFIG.get("default_size"),
+    DEFAULT_LABEL_FONT_CONFIG.get("default_size", 10),
+)
+
+GEOCHEM_RES_MIN = _cfg_int(
+    GEOCHEM_RES_CONFIG.get("min"),
+    DEFAULT_GEOCHEM_RES_CONFIG.get("min", 1),
+)
+GEOCHEM_RES_MAX = _cfg_int(
+    GEOCHEM_RES_CONFIG.get("max"),
+    DEFAULT_GEOCHEM_RES_CONFIG.get("max", 1000),
+)
+GEOCHEM_RES_DEFAULT = _cfg_int(
+    GEOCHEM_RES_CONFIG.get("default"),
+    DEFAULT_GEOCHEM_RES_CONFIG.get("default", 30),
+)
+
+EXPORT_RES_MIN = _cfg_int(
+    EXPORT_RES_CONFIG.get("min"),
+    DEFAULT_EXPORT_RES_CONFIG.get("min", 1),
+)
+EXPORT_RES_MAX = _cfg_int(
+    EXPORT_RES_CONFIG.get("max"),
+    DEFAULT_EXPORT_RES_CONFIG.get("max", 1000),
+)
+EXPORT_RES_DEFAULT = _cfg_int(
+    EXPORT_RES_CONFIG.get("default"),
+    DEFAULT_EXPORT_RES_CONFIG.get("default", 10),
+)
+
+LITHO_LAYER_KEYWORD = _cfg_str(
+    ZIP_CONFIG.get("litho_layer_keyword"),
+    DEFAULT_ZIP_CONFIG.get("litho_layer_keyword", "litho"),
+).lower()
+REFERENCE_LAYER_KEYWORDS = [
+    k.lower() for k in _cfg_str_list(
+        ZIP_CONFIG.get("reference_layer_keywords"),
+        DEFAULT_ZIP_CONFIG.get("reference_layer_keywords", ["frame", "crosssectionline"])
+    )
+]
+
+VECTOR_EXPORT_FIELD_CANDIDATES = _cfg_str_list(
+    RASTER_CONFIG.get("vector_export_field_candidates"),
+    DEFAULT_RASTER_CONFIG.get(
+        "vector_export_field_candidates",
+        ["LITHOIDX", "LITHONAME", "TYPE", "CODE", "ASGN_CODE", "SIGN"]
+    )
+)
+NODATA_VALUE = _cfg_float(RASTER_CONFIG.get("nodata"), DEFAULT_RASTER_CONFIG.get("nodata", -9999.0))
+GDAL_DATA_TYPE = _cfg_int(RASTER_CONFIG.get("gdal_data_type"), DEFAULT_RASTER_CONFIG.get("gdal_data_type", 5))
+MAXENT_RASTERIZE_UNITS = _cfg_int(
+    RASTER_CONFIG.get("maxent_rasterize_units"),
+    DEFAULT_RASTER_CONFIG.get("maxent_rasterize_units", 1),
+)
+MAXENT_RESAMPLING = _cfg_int(
+    RASTER_CONFIG.get("maxent_resampling"),
+    DEFAULT_RASTER_CONFIG.get("maxent_resampling", 0),
+)
+GEOCHEM_FILL_NODATA_DISTANCE = _cfg_int(
+    RASTER_CONFIG.get("geochem_fill_nodata_distance"),
+    DEFAULT_RASTER_CONFIG.get("geochem_fill_nodata_distance", 30),
+)
+MAXENT_MULTITHREADING = _cfg_bool(
+    RASTER_CONFIG.get("multithreading"),
+    DEFAULT_RASTER_CONFIG.get("multithreading", False),
+)
 
 class MainDialog(QDialog):
     def __init__(self, parent=None, iface=None):
@@ -59,12 +200,13 @@ class MainDialog(QDialog):
         
         # Font Settings
         self.font_combo = QFontComboBox()
+        self.font_combo.setCurrentFont(QFont(DEFAULT_LABEL_FONT_FAMILY))
         self.font_combo.setToolTip("지층 코드 라벨에 사용할 글꼴을 선택합니다.")
         load_layout.addRow("라벨 글꼴:", self.font_combo)
         
         self.size_spin = QSpinBox()
-        self.size_spin.setRange(5, 50)
-        self.size_spin.setValue(10)
+        self.size_spin.setRange(LABEL_FONT_SIZE_MIN, LABEL_FONT_SIZE_MAX)
+        self.size_spin.setValue(LABEL_FONT_SIZE_DEFAULT)
         self.size_spin.setToolTip("지층 코드 라벨의 크기를 설정합니다.")
         load_layout.addRow("글꼴 크기:", self.size_spin)
         
@@ -103,8 +245,8 @@ class MainDialog(QDialog):
         geochem_layout.addRow("분석 범위 (대상지):", self.extent_layer_combo)
 
         self.geochem_res_spin = QSpinBox()
-        self.geochem_res_spin.setRange(1, 1000)
-        self.geochem_res_spin.setValue(30)
+        self.geochem_res_spin.setRange(GEOCHEM_RES_MIN, GEOCHEM_RES_MAX)
+        self.geochem_res_spin.setValue(GEOCHEM_RES_DEFAULT)
         self.geochem_res_spin.setSuffix(" m")
         self.geochem_res_spin.setToolTip("변환될 결과 래스터의 해상도(픽셀 크기)를 설정합니다.")
         geochem_layout.addRow("해상도 (Resolution):", self.geochem_res_spin)
@@ -148,8 +290,8 @@ class MainDialog(QDialog):
 
         form_layout = QFormLayout()
         self.res_spin = QSpinBox()
-        self.res_spin.setRange(1, 1000)
-        self.res_spin.setValue(10)
+        self.res_spin.setRange(EXPORT_RES_MIN, EXPORT_RES_MAX)
+        self.res_spin.setValue(EXPORT_RES_DEFAULT)
         self.res_spin.setSuffix(" m")
         form_layout.addRow("해상도 (Resolution):", self.res_spin)
         maxent_layout.addLayout(form_layout)
@@ -260,7 +402,7 @@ class MainDialog(QDialog):
         layers = QgsProject.instance().mapLayers().values()
         for layer in layers:
             # Include Vector (Litho) or Raster (converted results)
-            is_litho = 'litho' in layer.name().lower() and layer.type() == 0
+            is_litho = LITHO_LAYER_KEYWORD in layer.name().lower() and layer.type() == 0
             is_result = '(수치화)' in layer.name() and layer.type() == 1
             
             if is_litho or is_result:
@@ -300,7 +442,13 @@ class MainDialog(QDialog):
         return zip_paths
 
     def _zoom_to_loaded_layers(self, loaded_layers):
-        frame_layer = next((l for l in loaded_layers if 'frame' in l.name().lower()), None)
+        frame_layer = next(
+            (
+                l for l in loaded_layers
+                if any(keyword in l.name().lower() for keyword in REFERENCE_LAYER_KEYWORDS)
+            ),
+            None
+        )
         target_layer = frame_layer if frame_layer else loaded_layers[0]
 
         if target_layer.isValid():
@@ -381,6 +529,13 @@ class MainDialog(QDialog):
             self.load_btn.setEnabled(True)
             self.browse_btn.setEnabled(True)
 
+    def _resolve_vector_export_field(self, layer):
+        fields = [f.name() for f in layer.fields()]
+        for candidate in VECTOR_EXPORT_FIELD_CANDIDATES:
+            if candidate in fields:
+                return candidate
+        return None
+
     def export_maxent_raster(self):
         """
         Rasterizes selected vector layers or exports selected raster layers for MaxEnt.
@@ -431,14 +586,15 @@ class MainDialog(QDialog):
                         'OUTPUT': 'TEMPORARY_OUTPUT'
                     }
                     merged = processing.run("native:mergevectorlayers", merge_params)['OUTPUT']
-                    # Ensure LITHOIDX exists in merged
-                    if merged.fields().indexOf('LITHOIDX') == -1:
-                         raise ValueError("통합된 레이어에 'LITHOIDX' 필드가 없습니다.")
-                    target_layers.append(('vector', merged))
+                    export_field = self._resolve_vector_export_field(merged)
+                    if not export_field:
+                         raise ValueError(f"통합된 레이어에 사용 가능한 필드가 없습니다. 후보: {', '.join(VECTOR_EXPORT_FIELD_CANDIDATES)}")
+                    target_layers.append(('vector', merged, export_field))
                 else:
-                    if vector_layers[0].fields().indexOf('LITHOIDX') == -1:
-                        raise ValueError(f"'{vector_layers[0].name()}' 레이어에 'LITHOIDX' 필드가 없습니다.")
-                    target_layers.append(('vector', vector_layers[0]))
+                    export_field = self._resolve_vector_export_field(vector_layers[0])
+                    if not export_field:
+                        raise ValueError(f"'{vector_layers[0].name()}' 레이어에 사용 가능한 필드가 없습니다. 후보: {', '.join(VECTOR_EXPORT_FIELD_CANDIDATES)}")
+                    target_layers.append(('vector', vector_layers[0], export_field))
 
             # B. Process Raster Layers (GeoTIFF clipping/resampling to match if needed)
             # For simplicity, we process each and the user might want them merged or separate.
@@ -454,15 +610,16 @@ class MainDialog(QDialog):
             # Let's handle the VECTORS first as a single output.
             if target_layers and target_layers[0][0] == 'vector':
                 v_layer = target_layers[0][1]
+                export_field = target_layers[0][2]
                 params = {
                     'INPUT': v_layer,
-                    'FIELD': 'LITHOIDX',
-                    'UNITS': 1,
+                    'FIELD': export_field,
+                    'UNITS': MAXENT_RASTERIZE_UNITS,
                     'WIDTH': resolution,
                     'HEIGHT': resolution,
                     'EXTENT': v_layer.extent(),
-                    'NODATA': -9999,
-                    'DATA_TYPE': 5, # Float32
+                    'NODATA': NODATA_VALUE,
+                    'DATA_TYPE': GDAL_DATA_TYPE, # Float32 by default
                     'OUTPUT': save_path
                 }
                 processing.run("gdal:rasterize", params)
@@ -483,14 +640,14 @@ class MainDialog(QDialog):
                     'INPUT': r_layer,
                     'SOURCE_CRS': None,
                     'TARGET_CRS': target_crs,
-                    'RESAMPLING': 0,  # Nearest Neighbour
-                    'NODATA': -9999,
+                    'RESAMPLING': MAXENT_RESAMPLING,
+                    'NODATA': NODATA_VALUE,
                     'TARGET_RESOLUTION': resolution,
                     'OPTIONS': '',
-                    'DATA_TYPE': 5,
+                    'DATA_TYPE': GDAL_DATA_TYPE,
                     'TARGET_EXTENT': extent_str,
                     'TARGET_EXTENT_CRS': target_crs,
-                    'MULTITHREADING': False,
+                    'MULTITHREADING': MAXENT_MULTITHREADING,
                     'EXTRA': '',
                     'OUTPUT': save_path
                 }
@@ -632,7 +789,7 @@ class MainDialog(QDialog):
                 points=preset.points,
                 snap_last_t=None # No snap
             )
-            nodata_val = np.float32(-9999.0)
+            nodata_val = np.float32(NODATA_VALUE)
             
             progress.setValue(60)
             progress.setLabelText("NoData 처리 중...")
@@ -664,7 +821,7 @@ class MainDialog(QDialog):
             # Step C: Inpainting (Black lines)
             mask = geochem_utils.mask_black_lines(r, g, b)
             val_arr[mask] = nodata_val
-            val_arr = geochem_utils.gdal_fill_nodata(val_arr, nodata_val, 30)
+            val_arr = geochem_utils.gdal_fill_nodata(val_arr, nodata_val, GEOCHEM_FILL_NODATA_DISTANCE)
             
             progress.setValue(85)
             progress.setLabelText("파일 저장 중...")

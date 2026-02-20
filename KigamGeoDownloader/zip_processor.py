@@ -5,6 +5,7 @@ import zipfile
 import tempfile
 import unicodedata
 import xml.etree.ElementTree as ET
+from .plugin_config import PLUGIN_CONFIG, DEFAULT_PLUGIN_CONFIG
 from qgis.core import (
     QgsProject,
     QgsVectorLayer,
@@ -18,10 +19,79 @@ from qgis.core import (
     Qgis
 )
 
+
+ZIP_CONFIG = PLUGIN_CONFIG.get("zip_processor", {})
+UI_CONFIG = PLUGIN_CONFIG.get("ui", {})
+LABEL_FONT_CONFIG = UI_CONFIG.get("label_font", {})
+DEFAULT_ZIP_CONFIG = DEFAULT_PLUGIN_CONFIG.get("zip_processor", {})
+DEFAULT_UI_CONFIG = DEFAULT_PLUGIN_CONFIG.get("ui", {})
+DEFAULT_LABEL_FONT_CONFIG = DEFAULT_UI_CONFIG.get("label_font", {})
+
+SYMBOL_PRIORITY_FIELDS = [
+    str(v).strip() for v in ZIP_CONFIG.get("symbol_priority_fields", DEFAULT_ZIP_CONFIG.get("symbol_priority_fields", []))
+    if isinstance(v, str) and str(v).strip()
+] or list(DEFAULT_ZIP_CONFIG.get("symbol_priority_fields", []))
+
+CANDIDATE_ENCODINGS = ZIP_CONFIG.get("candidate_encodings", list(DEFAULT_ZIP_CONFIG.get("candidate_encodings", [None])))
+if not isinstance(CANDIDATE_ENCODINGS, list) or not CANDIDATE_ENCODINGS:
+    CANDIDATE_ENCODINGS = list(DEFAULT_ZIP_CONFIG.get("candidate_encodings", [None]))
+
+ENCODING_PREFERENCE = ZIP_CONFIG.get(
+    "encoding_preference",
+    dict(DEFAULT_ZIP_CONFIG.get("encoding_preference", {"DEFAULT": 0}))
+)
+if not isinstance(ENCODING_PREFERENCE, dict):
+    ENCODING_PREFERENCE = dict(DEFAULT_ZIP_CONFIG.get("encoding_preference", {"DEFAULT": 0}))
+
+DEFAULT_FONT_FAMILY = str(
+    LABEL_FONT_CONFIG.get("default_family", DEFAULT_LABEL_FONT_CONFIG.get("default_family", "Malgun Gothic"))
+).strip() or "Malgun Gothic"
+QML_WRITE_ENCODING = str(
+    ZIP_CONFIG.get("qml_write_encoding", DEFAULT_ZIP_CONFIG.get("qml_write_encoding", "UTF-8"))
+).strip() or "UTF-8"
+FILL_SYMBOL_WIDTH = float(
+    ZIP_CONFIG.get("fill_symbol_width", DEFAULT_ZIP_CONFIG.get("fill_symbol_width", 10.0))
+)
+MARKER_SYMBOL_SIZE = float(
+    ZIP_CONFIG.get("marker_symbol_size", DEFAULT_ZIP_CONFIG.get("marker_symbol_size", 6.0))
+)
+REFERENCE_LAYER_KEYWORDS = [
+    str(v).strip().lower()
+    for v in ZIP_CONFIG.get("reference_layer_keywords", DEFAULT_ZIP_CONFIG.get("reference_layer_keywords", []))
+    if isinstance(v, str) and str(v).strip()
+]
+if not REFERENCE_LAYER_KEYWORDS:
+    REFERENCE_LAYER_KEYWORDS = [
+        str(v).strip().lower()
+        for v in DEFAULT_ZIP_CONFIG.get("reference_layer_keywords", [])
+        if isinstance(v, str) and str(v).strip()
+    ]
+if not REFERENCE_LAYER_KEYWORDS:
+    REFERENCE_LAYER_KEYWORDS = ["frame", "crosssectionline"]
+
+LITHO_LAYER_KEYWORD = str(
+    ZIP_CONFIG.get("litho_layer_keyword", DEFAULT_ZIP_CONFIG.get("litho_layer_keyword", "litho"))
+).strip().lower() or "litho"
+LABEL_FIELD_CANDIDATES = [
+    str(v).strip() for v in ZIP_CONFIG.get("label_field_candidates", DEFAULT_ZIP_CONFIG.get("label_field_candidates", []))
+    if isinstance(v, str) and str(v).strip()
+]
+if not LABEL_FIELD_CANDIDATES:
+    LABEL_FIELD_CANDIDATES = [
+        str(v).strip() for v in DEFAULT_ZIP_CONFIG.get("label_field_candidates", [])
+        if isinstance(v, str) and str(v).strip()
+    ]
+if not LABEL_FIELD_CANDIDATES:
+    LABEL_FIELD_CANDIDATES = ["LITHOIDX", "LITHONAME"]
+
+
 class ZipProcessor:
     def __init__(self):
         # Temp directory to extract files
-        self.extract_root = os.path.join(tempfile.gettempdir(), "KIGAM_Extract")
+        extract_root_name = str(
+            ZIP_CONFIG.get("extract_root_name", DEFAULT_ZIP_CONFIG.get("extract_root_name", "KIGAM_Extract"))
+        ).strip() or "KIGAM_Extract"
+        self.extract_root = os.path.join(tempfile.gettempdir(), extract_root_name)
         if not os.path.exists(self.extract_root):
             os.makedirs(self.extract_root)
 
@@ -242,7 +312,7 @@ class ZipProcessor:
         max_matches = -1
         best_value_count = 0
 
-        priority_fields = ['LITHOIDX', 'TYPE', 'ASGN_CODE', 'SIGN', 'CODE']
+        priority_fields = list(SYMBOL_PRIORITY_FIELDS)
         all_fields = [f.name() for f in layer.fields()]
 
         if qml_field and qml_field in all_fields:
@@ -279,15 +349,11 @@ class ZipProcessor:
 
     @staticmethod
     def _encoding_preference_rank(encoding):
-        # KIGAM shapefiles are predominantly CP949/EUC-KR encoded.
-        # Prefer Korean legacy encodings on tie to avoid mojibake labels/category values.
-        order = {
-            "CP949": 4,
-            "EUC-KR": 3,
-            None: 2,
-            "UTF-8": 1,
-        }
-        return order.get(encoding, 0)
+        if encoding is None:
+            return int(ENCODING_PREFERENCE.get("DEFAULT", 0))
+
+        key = str(encoding).upper()
+        return int(ENCODING_PREFERENCE.get(key, ENCODING_PREFERENCE.get("DEFAULT", 0)))
 
     def _load_layer_with_best_encoding(self, shp_path, layer_name, sym_path=None, qml_path=None):
         raw_sym_files, normalized_sym_files = self._build_symbol_index(sym_path) if sym_path else ({}, {})
@@ -299,7 +365,7 @@ class ZipProcessor:
                 if candidate not in qml_normalized_map:
                     qml_normalized_map[candidate] = image_stem
 
-        candidate_encodings = ["CP949", "EUC-KR", None, "UTF-8"]
+        candidate_encodings = list(CANDIDATE_ENCODINGS)
         best_layer = None
         best_encoding = None
         best_field = None
@@ -370,7 +436,7 @@ class ZipProcessor:
             os.path.dirname(qml_path),
             f"{os.path.splitext(os.path.basename(qml_path))[0]}_kigam_relinked.qml"
         )
-        tree.write(relinked_qml, encoding="UTF-8", xml_declaration=True)
+        tree.write(relinked_qml, encoding=QML_WRITE_ENCODING, xml_declaration=True)
         return relinked_qml, relinked_count, total_image_props
 
     @staticmethod
@@ -403,10 +469,13 @@ class ZipProcessor:
             suffix += 1
         return unique_group_name
 
-    def process_zip(self, zip_path, font_family="Malgun Gothic", font_size=10):
+    def process_zip(self, zip_path, font_family=None, font_size=10):
         """
         Extracts ZIP, loads shapefiles, and applies styling.
         """
+        if not font_family:
+            font_family = DEFAULT_FONT_FAMILY
+
         zip_basename = os.path.splitext(os.path.basename(zip_path))[0]
         safe_prefix = re.sub(r"[^A-Za-z0-9._-]+", "_", zip_basename).strip("_") or "kigam_map"
         # Keep a unique extraction folder per load so symbol file paths remain valid.
@@ -483,7 +552,7 @@ class ZipProcessor:
                         self.apply_sym_styling(layer, sym_path, qml_path)
                     
                     # Apply Labeling for Litho layers
-                    if 'Litho' in layer_name:
+                    if LITHO_LAYER_KEYWORD in layer_name.lower():
                          self.apply_labeling(layer, font_family, font_size)
 
         # Reorder inside the dedicated group.
@@ -568,7 +637,7 @@ class ZipProcessor:
                 if layer.geometryType() == 0: # Point
                     # Create Raster Marker
                     symbol_layer = QgsRasterMarkerSymbolLayer(png_path)
-                    symbol_layer.setSize(6) # Default size
+                    symbol_layer.setSize(MARKER_SYMBOL_SIZE) # Configurable default size
                     symbol = QgsMarkerSymbol()
                     symbol.changeSymbolLayer(0, symbol_layer)
                     
@@ -576,7 +645,7 @@ class ZipProcessor:
                     # Create Raster Fill
                     symbol_layer = QgsRasterFillSymbolLayer()
                     symbol_layer.setImageFilePath(png_path)
-                    symbol_layer.setWidth(10.0) # Adjust pattern scale/width
+                    symbol_layer.setWidth(FILL_SYMBOL_WIDTH) # Configurable pattern scale
                     symbol = QgsFillSymbol()
                     symbol.changeSymbolLayer(0, symbol_layer)
             
@@ -618,15 +687,21 @@ class ZipProcessor:
     def apply_labeling(self, layer, font_family, font_size):
         from qgis.core import (
             QgsVectorLayerSimpleLabeling, QgsPalLayerSettings, 
-            QgsTextFormat, QgsTextBufferSettings
+            QgsTextFormat
         )
         from qgis.PyQt.QtGui import QColor, QFont
 
         settings = QgsPalLayerSettings()
         
-        # Determine Label Field (LITHOIDX is usually preferred)
         fields = [f.name() for f in layer.fields()]
-        label_field = 'LITHOIDX' if 'LITHOIDX' in fields else 'LITHONAME' if 'LITHONAME' in fields else fields[0]
+        if not fields:
+            return
+
+        label_field = fields[0]
+        for candidate in LABEL_FIELD_CANDIDATES:
+            if candidate in fields:
+                label_field = candidate
+                break
         settings.fieldName = label_field
         
         # Text Format
@@ -669,11 +744,11 @@ class ZipProcessor:
         points = []
         lines = []
         polygons = []
-        reference = [] # Frame, Crosssectionline
+        reference = [] # Frame/Crosssectionline-like layers configured by keyword
 
         for layer in layers:
             name = layer.name().lower()
-            if 'frame' in name or 'crosssectionline' in name:
+            if any(keyword in name for keyword in REFERENCE_LAYER_KEYWORDS):
                 reference.append(layer)
             elif layer.geometryType() == 0: # Point
                 points.append(layer)

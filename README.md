@@ -1,4 +1,4 @@
-# KIGAM for Archaeology (QGIS Plugin) v0.1.3
+# KIGAM for Archaeology (QGIS Plugin) v0.1.4
 
 KIGAM 1:50,000 수치지질도 ZIP을 QGIS로 불러오고, `sym`/`qml` 기반 심볼링을 적용한 뒤 지구화학 수치화와 래스터 내보내기까지 지원하는 플러그인입니다.
 
@@ -18,7 +18,7 @@ KIGAM 1:50,000 수치지질도 ZIP을 QGIS로 불러오고, `sym`/`qml` 기반 �
 - 대상지 레이어 범위 + 해상도 기반 출력
 
 ### 3. Rasterize / Export
-- 지질도 벡터(`LITHOIDX`) 래스터화
+- 지질도 벡터(설정된 후보 필드) 래스터화
 - 수치화 래스터 GeoTIFF/ASC 저장
 
 ## 설치
@@ -49,7 +49,19 @@ KIGAM 1:50,000 수치지질도 ZIP을 QGIS로 불러오고, `sym`/`qml` 기반 �
   - 해당 레이어 `.qml` 존재 여부 확인
   - 인코딩이 강제로 UTF-8로 고정되지 않았는지 확인
 - ZIP을 여러 개 불러올 때 그룹이 합쳐지면:
-  - 최신 버전(0.1.3) 적용 여부를 먼저 확인하세요.
+  - 최신 버전(0.1.4) 적용 여부를 먼저 확인하세요.
+
+## 설정 파일 (하드코딩 제거)
+
+- 경로: `KigamGeoDownloader/plugin_config.json`
+- 주요 설정:
+  - `zip_processor.symbol_priority_fields`
+  - `zip_processor.candidate_encodings`
+  - `zip_processor.marker_symbol_size`
+  - `zip_processor.fill_symbol_width`
+  - `raster.vector_export_field_candidates`
+  - `raster.nodata`
+- 코드 수정 없이 위 값을 바꿔 동작을 조정할 수 있습니다.
 
 ## 개발/패키징
 
