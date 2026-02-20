@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this plugin in research or reports, please cite it using the metadata below."
 title: "KIGAM for Archaeology"
 type: software
-version: "0.1.4"
+version: "0.1.1"
 date-released: 2026-02-20
 license: GPL-3.0-or-later
 authors:
