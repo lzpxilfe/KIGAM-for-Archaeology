@@ -1,0 +1,16 @@
+[general]
+name=KIGAM for Archaeology
+qgisMinimumVersion=3.0
+description=Load KIGAM 1:50,000 ZIP maps, apply symbols/labels, and export analysis rasters with configurable behavior.
+version=0.1.1
+author=balguljang2(lzpxilfe)
+email=lzpxilfe@gmail.com
+about=This plugin loads KIGAM geological-map ZIP packages, applies sym/QML styles with CP949-safe matching, and supports GeoChem raster conversion/export workflows.
+tracker=https://github.com/lzpxilfe/KIGAM-for-Archaeology/issues
+repository=https://github.com/lzpxilfe/KIGAM-for-Archaeology
+homepage=https://github.com/lzpxilfe/KIGAM-for-Archaeology
+icon=icon.png
+tags=geology, archaeology, kigam, qgis, geochem, raster
+category=Plugins
+type=plugins
+experimental=False

@@ -1,0 +1,46 @@
+{
+  "ui": {
+    "label_font": {
+      "default_family": "Malgun Gothic",
+      "size_min": 5,
+      "size_max": 50,
+      "default_size": 10
+    },
+    "geochem_resolution": {
+      "min": 1,
+      "max": 1000,
+      "default": 30
+    },
+    "export_resolution": {
+      "min": 1,
+      "max": 1000,
+      "default": 10
+    }
+  },
+  "zip_processor": {
+    "extract_root_name": "KIGAM_Extract",
+    "symbol_priority_fields": ["LITHOIDX", "TYPE", "ASGN_CODE", "SIGN", "CODE"],
+    "candidate_encodings": ["CP949", "EUC-KR", null, "UTF-8"],
+    "encoding_preference": {
+      "CP949": 4,
+      "EUC-KR": 3,
+      "default": 2,
+      "UTF-8": 1
+    },
+    "qml_write_encoding": "UTF-8",
+    "marker_symbol_size": 6.0,
+    "fill_symbol_width": 10.0,
+    "label_field_candidates": ["LITHOIDX", "LITHONAME"],
+    "reference_layer_keywords": ["frame", "crosssectionline"],
+    "litho_layer_keyword": "litho"
+  },
+  "raster": {
+    "vector_export_field_candidates": ["LITHOIDX", "LITHONAME", "TYPE", "CODE", "ASGN_CODE", "SIGN"],
+    "nodata": -9999.0,
+    "gdal_data_type": 5,
+    "maxent_rasterize_units": 1,
+    "maxent_resampling": 0,
+    "geochem_fill_nodata_distance": 30,
+    "multithreading": false
+  }
+}
