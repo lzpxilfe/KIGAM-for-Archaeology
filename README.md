@@ -1,98 +1,101 @@
-# KIGAM for Archaeology (QGIS Plugin) v0.1.1
+# 🗺️ KIGAM for Archaeology
 
-KIGAM 1:50,000 수치지질도 ZIP을 QGIS로 불러오고, `sym`/`qml` 기반 심볼링을 적용한 뒤 지구화학 수치화와 래스터 내보내기까지 지원하는 플러그인입니다.
+> KIGAM 지질도 ZIP과 GeoChem 지구화학 래스터를 QGIS에서 빠르게 불러오고, 스타일링하고, 분석용 래스터로 내보내기 위한 플러그인입니다.
 
-## 주요 기능
+## 📌 한눈에 보기
 
-### 1. 지질도 ZIP 로드 + 심볼링
-- ZIP 다중 선택 로드 지원
-- 로드 후 플러그인 창을 자동으로 닫지 않음
-- ZIP별로 **독립 그룹** 생성 (이전 로드 그룹과 혼합 방지)
-- `sym` 폴더 PNG와 레이어 속성값 자동 매칭
-- `qml`의 `imageFile` 경로를 추출 경로로 자동 relink
-- 인코딩 후보를 비교해 로딩하며 `CP949/EUC-KR` 우선 처리
+| 항목 | 내용 |
+| --- | --- |
+| 버전 | `0.1.2` |
+| 최소 QGIS 버전 | `3.0` |
+| 배포 패키지 | `KigamGeoDownloader-0.1.2.zip` |
+| 라이선스 | `GPL-2.0` |
 
-### 2. GeoChem RGB -> Value 변환
-- WMS 래스터 RGB 색상을 수치 래스터로 변환
-- Fe2O3, Pb, Cu, Zn, Sr, Ba, CaO 프리셋 제공
-- 대상지 레이어 범위 + 해상도 기반 출력
+## ✨ 주요 기능
 
-### 3. Rasterize / Export
-- 지질도 벡터(설정된 후보 필드) 래스터화
-- 수치화 래스터 GeoTIFF/ASC 저장
-- 래스터 레이어를 여러 개 선택한 경우 현재는 첫 번째 레이어 1개만 내보냄
+- 📦 KIGAM에서 받은 지질도 ZIP 파일을 QGIS에 바로 불러옵니다.
+- 🗂️ ZIP 여러 개를 한 번에 선택해서 연속으로 로드할 수 있습니다.
+- 🎨 `sym/` 폴더의 PNG 심볼과 sidecar `.qml` 스타일을 자동으로 적용합니다.
+- 🔁 추출된 폴더 기준으로 QML 내부 이미지 경로를 다시 연결해 스타일 깨짐을 줄입니다.
+- 🇰🇷 CP949, EUC-KR, UTF-8 등 한글 인코딩 차이를 고려해 심볼 매칭 정확도를 높입니다.
+- 🏷️ 암상 레이어에 라벨을 자동으로 적용하고 글꼴/크기를 조정할 수 있습니다.
+- 🔬 GeoChem RGB 래스터를 수치 래스터로 변환할 수 있습니다.
+- 🧪 `Fe2O3`, `Pb`, `Cu`, `Zn`, `Sr`, `Ba`, `CaO` 프리셋을 제공합니다.
+- 🌍 선택한 벡터/래스터 레이어를 GeoTIFF 또는 ASCII Grid로 내보낼 수 있습니다.
 
-## 설치
+## 🚀 빠른 시작
 
-### QGIS에서 ZIP 설치
-1. GitHub Releases에서 플러그인 ZIP 다운로드
-2. QGIS 메뉴 `플러그인 > 플러그인 관리 및 설치 > ZIP 파일에서 설치`
-3. 다운로드한 ZIP 선택
+1. QGIS에서 플러그인을 실행합니다.
+2. `KIGAM 데이터 다운로드 페이지 열기` 버튼으로 KIGAM 사이트를 엽니다.
+3. 필요한 지질도 ZIP을 내려받습니다.
+4. 플러그인에서 ZIP 파일을 하나 이상 선택합니다.
+5. 라벨 글꼴과 크기를 정한 뒤 `자동 로드 및 스타일 적용`을 누릅니다.
+6. 필요하면 GeoChem 분석이나 래스터 내보내기까지 이어서 진행합니다.
 
-### 개발 설치
-1. 저장소를 클론
-2. `KigamGeoDownloader` 폴더를 QGIS 플러그인 경로에 복사
-3. QGIS 재시작 후 플러그인 활성화
+## 📥 설치 방법
 
-## 사용 방법
+### ZIP으로 설치
 
-1. QGIS에서 `KIGAM Tools` 실행
-2. `2. 지질도 불러오기`에서 ZIP 1개 이상 선택 후 로드
-3. `3. 지구화학 분석`에서 WMS/프리셋/대상지/해상도 선택 후 변환
-4. `4. 래스터 변환 및 내보내기`에서 분석용 래스터 저장
+1. QGIS를 엽니다.
+2. `Plugins -> Manage and Install Plugins...`로 이동합니다.
+3. `Install from ZIP` 탭을 엽니다.
+4. 배포 파일 `KigamGeoDownloader-0.1.2.zip`을 선택합니다.
 
-## 트러블슈팅
+### 개발용 설치
 
-- 로그 패널에 `Plugin runtime: ... (version ...)`가 표시됩니다.
-  - 실제 실행 중인 플러그인 경로/버전 확인용입니다.
-- `?` 심볼/라벨이 보이면:
-  - ZIP 내부 `sym` 폴더 존재 여부 확인
-  - 해당 레이어 `.qml` 존재 여부 확인
-  - 인코딩이 강제로 UTF-8로 고정되지 않았는지 확인
-- ZIP을 여러 개 불러올 때 그룹이 합쳐지면:
-  - 현재 배포 버전(0.1.1) 설치본이 최신 코드인지 먼저 확인하세요.
+QGIS 플러그인 디렉터리의 `python/plugins/KigamGeoDownloader` 위치에 이 저장소를 복사하거나 심볼릭 링크로 연결하면 로컬 개발이 가능합니다.
 
-## 설정 파일 (하드코딩 제거)
-
-- 경로: `KigamGeoDownloader/plugin_config.json`
-- 주요 설정:
-  - `zip_processor.symbol_priority_fields`
-  - `zip_processor.candidate_encodings`
-  - `zip_processor.marker_symbol_size`
-  - `zip_processor.fill_symbol_width`
-  - `raster.vector_export_field_candidates`
-  - `raster.nodata`
-- 코드 수정 없이 위 값을 바꿔 동작을 조정할 수 있습니다.
-
-## 개발/패키징
+예시:
 
 ```bash
-python create_package.py
+ln -s /path/to/KigamGeoDownloader \
+  ~/Library/Application\ Support/QGIS/QGIS3/profiles/default/python/plugins/KigamGeoDownloader
 ```
 
-`metadata.txt`의 버전을 읽어 바탕화면에 `KIGAM_for_Archaeology_v<version>.zip`를 생성합니다.
+코드를 수정한 뒤에는 QGIS에서 플러그인을 다시 불러오거나 QGIS를 재시작하면 됩니다.
 
-## Citation
+## 🧭 사용 흐름
 
-이 저장소에는 `CITATION.cff`가 포함되어 있습니다.  
-학술/보고서 인용 시 `CITATION.cff` 또는 아래 BibTeX를 사용하세요.
+### 1. 지질도 ZIP 불러오기
 
-```bibtex
-@software{kigam_for_archaeology,
-  author = {balguljang2 (lzpxilfe)},
-  title = {KIGAM for Archaeology: QGIS Plugin for Geological Map and GeoChem Workflows},
-  year = {2026},
-  url = {https://github.com/lzpxilfe/KIGAM-for-Archaeology}
-}
+- KIGAM에서 받은 ZIP을 선택하면 압축을 풀고 SHP 레이어를 프로젝트에 추가합니다.
+- 같은 ZIP에서 나온 레이어는 전용 그룹으로 묶어 정리합니다.
+- `sym/` 폴더와 `.qml` 파일이 있으면 스타일을 우선 적용합니다.
+- 암상 레이어 이름에 `litho`가 포함되면 라벨을 자동으로 설정합니다.
+
+### 2. GeoChem RGB -> Value 변환
+
+- QGIS에 추가된 래스터 레이어를 선택합니다.
+- 원소 프리셋을 고른 뒤 분석 범위와 해상도를 설정합니다.
+- 결과는 GeoTIFF 수치 래스터로 저장되며, QGIS에 다시 로드됩니다.
+
+### 3. 분석용 래스터 내보내기
+
+- 선택한 벡터 레이어는 적절한 속성 필드를 찾아 래스터화합니다.
+- 선택한 래스터 레이어는 해상도를 맞춰 다시 내보낼 수 있습니다.
+- 결과 포맷은 `GeoTIFF (*.tif)` 또는 `ASCII Grids (*.asc)`를 사용할 수 있습니다.
+
+## ⚠️ 알아두면 좋은 점
+
+- `sym/` 폴더가 없는 ZIP도 레이어는 로드될 수 있지만, 심볼 스타일은 적용되지 않을 수 있습니다.
+- sidecar `.qml`이 있으면 먼저 사용하고, 실패하면 PNG 기반 categorized renderer로 대체합니다.
+- GeoChem 분석은 RGB 범례 색상에 맞춰 값을 추정하므로, 원본 WMS/WFS 스타일이 달라지면 결과도 달라질 수 있습니다.
+
+## 🛠️ 개발 체크
+
+아래 명령으로 기본 점검을 할 수 있습니다.
+
+```bash
+flake8 .
+bandit -q -r .
+python3 -m compileall .
 ```
 
-## Star 부탁
+## 🔗 링크
 
-프로젝트가 도움이 되었다면 GitHub Star를 부탁드립니다.  
-짧은 사용 피드백이나 이슈 리포트도 큰 도움이 됩니다.
+- Repository: [KIGAM-for-Archaeology](https://github.com/lzpxilfe/KIGAM-for-Archaeology)
+- Issues: [Bug report / feature request](https://github.com/lzpxilfe/KIGAM-for-Archaeology/issues)
 
-자세한 문구는 `SUPPORT.md`를 참고하세요.
+## 📄 License
 
-## License
-
-GNU GPL v2
+`GPL-2.0`. 자세한 내용은 [LICENSE](LICENSE)를 참고하세요.

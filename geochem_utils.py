@@ -7,29 +7,25 @@ This module contains functions and data for converting WMS RGB raster
 to numerical value rasters based on legend color mapping.
 """
 import os
-import math
-import uuid
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
-from osgeo import gdal, ogr
+from osgeo import gdal
 from qgis.core import (
-    Qgis,
     QgsRasterLayer,
     QgsRectangle,
-    QgsCoordinateTransform,
     QgsProject,
-    QgsGeometry,
     QgsRasterPipe,
     QgsRasterFileWriter,
-    QgsRasterProjector
 )
+
 
 @dataclass(frozen=True)
 class LegendPoint:
     value: float
     rgb: Tuple[int, int, int]
+
 
 @dataclass(frozen=True)
 class GeoChemPreset:
@@ -37,6 +33,7 @@ class GeoChemPreset:
     label: str
     unit: str
     points: Sequence[LegendPoint]
+
 
 # EXACT COPY from ArchToolkit (lzpxilfe/ar) geochem_polygonize_dialog.py lines 91-204
 FE2O3_POINTS: List[LegendPoint] = [
@@ -170,7 +167,7 @@ def interp_rgb_to_value(
     snap_last_t: Optional[float] = None,
 ) -> np.ndarray:
     """Vectorized mapping: RGB -> scalar value by projecting to the nearest legend polyline segment in RGB space.
-    
+
     EXACT COPY from ArchToolkit (lzpxilfe/ar) geochem_polygonize_dialog.py lines 251-321
     """
     if r.shape != g.shape or r.shape != b.shape:
@@ -215,10 +212,7 @@ def interp_rgb_to_value(
         t = ((rr - c1r) * vr + (gg - c1g) * vg + (bb - c1b) * vb) / v_len_sq
         np.clip(t, np.float32(0.0), np.float32(1.0), out=t)
         if snap_last is not None and i == last_seg_idx:
-            try:
-                t[t > np.float32(snap_last)] = np.float32(1.0)
-            except Exception:
-                pass
+            t[t > np.float32(snap_last)] = np.float32(1.0)
         pr = c1r + t * vr
         pg = c1g + t * vg
         pb = c1b + t * vb
@@ -238,34 +232,38 @@ def interp_rgb_to_value(
 
 def mask_black_lines(r: np.ndarray, g: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Detect neutral dark 'linework' (not intense red/brown) and return mask.
-    
+
     EXACT COPY from ArchToolkit (lzpxilfe/ar) geochem_polygonize_dialog.py lines 324-335
     """
     rr = r.astype(np.int16, copy=False)
     gg = g.astype(np.int16, copy=False)
     bb = b.astype(np.int16, copy=False)
-    return (
-        (rr < 75)
-        & (gg < 75)
-        & (bb < 75)
-        & (np.abs(rr - gg) < 15)
-        & (np.abs(gg - bb) < 15)
+    return np.logical_and.reduce(
+        (
+            rr < 75,
+            gg < 75,
+            bb < 75,
+            np.abs(rr - gg) < 15,
+            np.abs(gg - bb) < 15,
+        )
     )
 
 
 def gdal_fill_nodata(arr: np.ndarray, nodata: float, max_dist_px: int) -> np.ndarray:
     """Fill nodata using GDAL FillNodata.
-    
+
     EXACT COPY from ArchToolkit (lzpxilfe/ar) geochem_polygonize_dialog.py lines 375-400
     """
     a = arr.astype(np.float32, copy=True)
     a[~np.isfinite(a)] = float(nodata)
     ysize, xsize = a.shape
-    ds = gdal.GetDriverByName("MEM").Create("", xsize, ysize, 1, gdal.GDT_Float32)
+    ds = gdal.GetDriverByName("MEM").Create(
+        "", xsize, ysize, 1, gdal.GDT_Float32)
     band = ds.GetRasterBand(1)
     band.WriteArray(a)
     band.SetNoDataValue(float(nodata))
-    gdal.FillNodata(targetBand=band, maskBand=None, maxSearchDist=max(1, max_dist_px), smoothingIterations=0)
+    gdal.FillNodata(targetBand=band, maskBand=None, maxSearchDist=max(
+        1, max_dist_px), smoothingIterations=0)
     filled = band.ReadAsArray()
     ds = None
     return filled
@@ -275,11 +273,11 @@ def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width
     """
     Export a raster layer (including WMS) to a GeoTIFF.
     Uses QgsRasterFileWriter, falls back to GDAL warp if needed.
-    
+
     BASED ON ArchToolkit (lzpxilfe/ar) geochem_polygonize_dialog.py lines 1968-2030
     """
     import processing
-    
+
     try:
         provider = layer.dataProvider()
         pipe = QgsRasterPipe()
@@ -291,7 +289,8 @@ def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width
         writer.setOutputFormat("GTiff")
         writer.setCreateOptions(["COMPRESS=LZW", "TILED=YES"])
         ctx = QgsProject.instance().transformContext()
-        res = writer.writeRaster(pipe, int(width), int(height), extent, layer.crs(), ctx)
+        res = writer.writeRaster(pipe, int(width), int(
+            height), extent, layer.crs(), ctx)
         if res != 0:
             print(f"[GeoChem] writeRaster returned {res}")
             raise RuntimeError(f"writeRaster failed ({res})")
@@ -304,7 +303,8 @@ def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width
     try:
         extent_str = f"{extent.xMinimum()},{extent.xMaximum()},{extent.yMinimum()},{extent.yMaximum()}"
         # Match the requested width/height via target resolution in layer CRS units.
-        px = max(extent.width() / max(1, int(width)), extent.height() / max(1, int(height)))
+        px = max(extent.width() / max(1, int(width)),
+                 extent.height() / max(1, int(height)))
         px = float(px) if px > 0 else None
         processing.run(
             "gdal:warpreproject",
@@ -328,5 +328,5 @@ def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width
             return True
     except Exception as e2:
         print(f"[GeoChem] GDAL warp fallback also failed: {e2}")
-        
+
     return False

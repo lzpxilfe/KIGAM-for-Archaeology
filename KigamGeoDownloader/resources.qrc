@@ -1,5 +1,0 @@
-<RCC>
-    <qresource prefix="/plugins/KigamGeoDownloader" >
-        <file>icon.png</file>
-    </qresource>
-</RCC>

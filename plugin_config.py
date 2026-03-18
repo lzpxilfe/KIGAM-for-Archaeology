@@ -54,10 +54,7 @@ DEFAULT_PLUGIN_CONFIG = {
 
 def _deep_merge(base, override):
     for key, value in override.items():
-        if (
-            isinstance(value, dict)
-            and isinstance(base.get(key), dict)
-        ):
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
             _deep_merge(base[key], value)
         else:
             base[key] = value
@@ -130,14 +127,14 @@ def load_plugin_config(plugin_dir=None):
 
     config_path = os.path.join(plugin_dir, "plugin_config.json")
     if os.path.exists(config_path):
+        loaded = None
         try:
             with open(config_path, "r", encoding="utf-8") as fp:
                 loaded = json.load(fp)
-            if isinstance(loaded, dict):
-                _deep_merge(config, loaded)
-        except Exception:
-            # Keep defaults if config is malformed.
-            pass
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            loaded = None
+        if isinstance(loaded, dict):
+            _deep_merge(config, loaded)
 
     return _normalize_plugin_config(config)
 
