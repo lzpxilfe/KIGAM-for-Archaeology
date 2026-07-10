@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this repository in research, teaching, or applied work, please cite it using the metadata below."
+type: software
+title: "KIGAM-for-Archaeology: 한국지질자원연구원 데이터의 고고학적 활용"
+authors:
+  - family-names: Hwang
+    given-names: Jinseo
+repository-code: "https://github.com/lzpxilfe/KIGAM-for-Archaeology"
+url: "https://github.com/lzpxilfe/KIGAM-for-Archaeology"
+date-released: 2026-07-10
+abstract: >
+  한국지질자원연구원 데이터의 고고학적 활용
+keywords:
+  - archaeology
+  - digital archaeology
+  - research software
