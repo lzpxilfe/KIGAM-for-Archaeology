@@ -370,6 +370,63 @@ class ZipProcessor:
         key = str(encoding).upper()
         return int(ENCODING_PREFERENCE.get(key, ENCODING_PREFERENCE.get("DEFAULT", 0)))
 
+    @staticmethod
+    def _score_text_quality(text):
+        """
+        Return a heuristic quality score for a decoded string.
+        - Rewards Hangul (Korean) characters and normal printable ASCII/CJK.
+        - Penalises Latin-1 replacement characters (\x80-\x9F, \xC0+) that
+          commonly appear when CP949/EUC-KR bytes are mis-decoded as UTF-8,
+          or when UTF-8 bytes are mis-decoded as CP949.
+        A higher score means the text looks more plausible for the encoding.
+        """
+        if not text:
+            return 0
+        score = 0
+        for ch in text:
+            cp = ord(ch)
+            if 0xAC00 <= cp <= 0xD7A3:   # Hangul syllables — very good
+                score += 3
+            elif 0x1100 <= cp <= 0x11FF:  # Hangul Jamo
+                score += 2
+            elif 0x3130 <= cp <= 0x318F:  # Hangul Compatibility Jamo
+                score += 2
+            elif 0x4E00 <= cp <= 0x9FFF:  # CJK Unified Ideographs
+                score += 1
+            elif 0x20 <= cp <= 0x7E:      # Normal printable ASCII
+                score += 1
+            elif 0xC0 <= cp <= 0xFF:      # Latin Extended — mojibake indicator
+                score -= 2
+            elif 0x80 <= cp <= 0x9F:      # C1 control chars — strong mojibake
+                score -= 4
+            elif cp == 0xFFFD:            # Unicode replacement char — failed decode
+                score -= 5
+        return score
+
+    @classmethod
+    def _layer_text_score(cls, layer, max_fields=10, max_values=30):
+        """
+        Sample string field values from *layer* and return an aggregate
+        text-quality score using _score_text_quality().
+        Only the first *max_fields* string fields and *max_values* unique
+        values per field are examined to keep this fast.
+        """
+        total = 0
+        string_fields = [
+            f.name() for f in layer.fields()
+            if f.typeName().lower() in ("string", "varchar", "text", "character")
+               or str(f.type()) in ("10",)  # QVariant.String == 10
+        ]
+        for field_name in string_fields[:max_fields]:
+            idx = layer.fields().indexOf(field_name)
+            if idx < 0:
+                continue
+            for val in list(layer.uniqueValues(idx))[:max_values]:
+                if val is None:
+                    continue
+                total += cls._score_text_quality(str(val))
+        return total
+
     def _load_layer_with_best_encoding(self, shp_path, layer_name, sym_path=None, qml_path=None):
         raw_sym_files, normalized_sym_files = self._build_symbol_index(
             sym_path) if sym_path else ({}, {})
@@ -407,7 +464,16 @@ class ZipProcessor:
             else:
                 field_name, matches, total_values = (None, 0, 0)
 
-            score = (matches, self._encoding_preference_rank(encoding))
+            # Primary sort key: symbol match count.
+            # Secondary key: heuristic text-quality score (detects garbled Korean).
+            # Tertiary key: explicit encoding preference from config.
+            # Using text quality as secondary ensures that when there are no
+            # symbol matches (matches == 0 for all encodings), the encoding that
+            # produces the most valid Korean/Unicode text wins, rather than always
+            # falling back to the config preference rank (which would always pick
+            # CP949 and garble UTF-8 encoded DBF files).
+            text_score = self._layer_text_score(layer)
+            score = (matches, text_score, self._encoding_preference_rank(encoding))
             if best_score is None or score > best_score:
                 best_score = score
                 best_layer = layer

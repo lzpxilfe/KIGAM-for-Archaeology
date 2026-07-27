@@ -29,7 +29,7 @@
     },
     "qml_write_encoding": "UTF-8",
     "marker_symbol_size": 6.0,
-    "fill_symbol_width": 10.0,
+    "fill_symbol_width": 50.0,
     "label_field_candidates": ["LITHOIDX", "LITHONAME"],
     "reference_layer_keywords": ["frame", "crosssectionline"],
     "litho_layer_keyword": "litho"
