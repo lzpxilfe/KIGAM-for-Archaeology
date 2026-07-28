@@ -573,7 +573,7 @@ class ZipProcessor:
                 zip_ref.extractall(extract_dir)
         except Exception as e:
             QgsMessageLog.logMessage(
-                f"Failed to extract ZIP: {str(e)}", "KIGAM Plugin", Qgis.Critical)
+                f"Failed to extract ZIP: {str(e)}", "KIGAM Plugin", Qgis.MessageLevel.Critical)
             return []
 
         # Locate 'sym' folder
@@ -586,7 +586,7 @@ class ZipProcessor:
 
         if not sym_path:
             QgsMessageLog.logMessage(
-                "No 'sym' folder found in the ZIP.", "KIGAM Plugin", Qgis.Warning)
+                "No 'sym' folder found in the ZIP.", "KIGAM Plugin", Qgis.MessageLevel.Warning)
 
         # Load Shapefiles
         tree_root = QgsProject.instance().layerTreeRoot()
@@ -608,7 +608,7 @@ class ZipProcessor:
 
                     if not layer or not layer.isValid():
                         QgsMessageLog.logMessage(
-                            f"Failed to load layer: {shp_path}", "KIGAM Plugin", Qgis.Warning)
+                            f"Failed to load layer: {shp_path}", "KIGAM Plugin", Qgis.MessageLevel.Warning)
                         continue
 
                     if used_encoding is None:
@@ -618,7 +618,7 @@ class ZipProcessor:
                     QgsMessageLog.logMessage(
                         f"{layer_name}: loaded with encoding '{enc_label}' (pre-match {pre_matches}/{pre_total}, field={pre_field})",
                         "KIGAM Plugin",
-                        Qgis.Info
+                        Qgis.MessageLevel.Info
                     )
 
                     if target_group is None:
@@ -628,7 +628,7 @@ class ZipProcessor:
                         QgsMessageLog.logMessage(
                             f"Created layer group: {unique_group_name}",
                             "KIGAM Plugin",
-                            Qgis.Info
+                            Qgis.MessageLevel.Info
                         )
 
                     # Add to project without auto-placement, then place directly in this ZIP group.
@@ -651,6 +651,7 @@ class ZipProcessor:
 
         return loaded_layers
 
+
     def apply_sym_styling(self, layer, sym_path, qml_path=None):
         """
         Analyzes the layer to find a field matching the symbols in sym_path,
@@ -672,14 +673,14 @@ class ZipProcessor:
             QgsMessageLog.logMessage(
                 f"Applied sidecar QML to {layer.name()} (relinked {relinked_count}/{total_image_props} image paths)",
                 "KIGAM Plugin",
-                Qgis.Success
+                Qgis.MessageLevel.Success
             )
             return
         if relinked_qml:
             QgsMessageLog.logMessage(
                 f"Failed to apply relinked QML to {layer.name()}, falling back to sym-based renderer",
                 "KIGAM Plugin",
-                Qgis.Warning
+                Qgis.MessageLevel.Warning
             )
 
         qml_field, qml_value_to_image = self._parse_qml_mapping(qml_path)
@@ -708,12 +709,12 @@ class ZipProcessor:
                     f"Available fields: {', '.join(all_fields)}"
                 ),
                 "KIGAM Plugin",
-                Qgis.Info,
+                Qgis.MessageLevel.Info,
             )
             return
 
         QgsMessageLog.logMessage(
-            f"Applying style to {layer.name()} using field '{best_field}' ({max_matches} matches)", "KIGAM Plugin", Qgis.Success)
+            f"Applying style to {layer.name()} using field '{best_field}' ({max_matches} matches)", "KIGAM Plugin", Qgis.MessageLevel.Success)
 
         # 2. Create Categories
         categories = []
@@ -783,7 +784,7 @@ class ZipProcessor:
                 QgsMessageLog.logMessage(
                     f"{layer.name()}: {len(missing_values)} value(s) had no matching PNG in sym ({preview})",
                     "KIGAM Plugin",
-                    Qgis.Warning
+                    Qgis.MessageLevel.Warning
                 )
 
     def apply_labeling(self, layer, font_family, font_size):
@@ -821,7 +822,7 @@ class ZipProcessor:
 
         # Placement: Horizontal (0), Free (1), etc.
         # For Polygons, we want "Over Point" or "Horizontal"
-        settings.placement = QgsPalLayerSettings.Horizontal
+        settings.placement = QgsPalLayerSettings.Placement.Horizontal
 
         # Smart Placement Logic
         settings.centroidInside = True  # Force label inside

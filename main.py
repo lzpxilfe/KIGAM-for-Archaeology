@@ -343,7 +343,7 @@ class MainDialog(QDialog):
 
         bottom_layout.addStretch()
 
-        self.buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         self.buttons.rejected.connect(self.reject)
         bottom_layout.addWidget(self.buttons)
 
@@ -368,7 +368,7 @@ class MainDialog(QDialog):
 
     def log(self, message: str):
         """Write a message to the built-in log panel."""
-        from PyQt5.QtCore import QCoreApplication
+        from qgis.PyQt.QtCore import QCoreApplication
         self.log_text.append(message)
         self.log_text.verticalScrollBar().setValue(
             self.log_text.verticalScrollBar().maximum())
@@ -424,9 +424,9 @@ class MainDialog(QDialog):
 
             if is_litho or is_result:
                 item = QListWidgetItem(layer.name())
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                item.setCheckState(Qt.Checked)
-                item.setData(Qt.UserRole, layer.id())
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked)
+                item.setData(Qt.ItemDataRole.UserRole, layer.id())
                 self.layer_list.addItem(item)
 
     def open_kigam_website(self):
@@ -565,8 +565,8 @@ class MainDialog(QDialog):
         selected_layer_ids = []
         for i in range(self.layer_list.count()):
             item = self.layer_list.item(i)
-            if item.checkState() == Qt.Checked:
-                selected_layer_ids.append(item.data(Qt.UserRole))
+            if item.checkState() == Qt.CheckState.Checked:
+                selected_layer_ids.append(item.data(Qt.ItemDataRole.UserRole))
 
         if not selected_layer_ids:
             QMessageBox.warning(self, "오류", "내보낼 레이어를 하나 이상 선택해주세요.")
@@ -794,13 +794,13 @@ class MainDialog(QDialog):
                 raise RuntimeError("WMS 레이어 내보내기에 실패했습니다.")
 
             # Step B: Read and Process with Progress Dialog
-            from PyQt5.QtWidgets import QProgressDialog
-            from PyQt5.QtCore import Qt
+            from qgis.PyQt.QtWidgets import QProgressDialog
+            from qgis.PyQt.QtCore import Qt
             from qgis.core import QgsColorRampShader, QgsRasterShader, QgsSingleBandPseudoColorRenderer
-            from PyQt5.QtGui import QColor
+            from qgis.PyQt.QtGui import QColor
 
             progress = QProgressDialog("지구화학 분석 중...", "취소", 0, 100, self)
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.setMinimumDuration(0)
             progress.setValue(10)
             QCoreApplication.processEvents()
@@ -899,7 +899,7 @@ class MainDialog(QDialog):
                 # Apply legend-based pseudo-color styling (ArchToolkit method)
                 shader = QgsRasterShader()
                 ramp = QgsColorRampShader()
-                ramp.setColorRampType(QgsColorRampShader.Interpolated)
+                ramp.setColorRampType(QgsColorRampShader.Type.Interpolated)
                 items = []
                 for p in preset.points:
                     item = None
@@ -987,4 +987,4 @@ class KigamGeoDownloader:
     def run(self):
         # Show Main Dialog
         dialog = MainDialog(self.iface.mainWindow(), self.iface)
-        dialog.exec_()
+        dialog.exec()
