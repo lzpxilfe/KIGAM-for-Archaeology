@@ -10,7 +10,7 @@ jobs:
       matrix:
         include:
           - name: QGIS 3.40
-            image: qgis/qgis:release-3_40
+            image: qgis/qgis:3.40.15-noble
             major: 3
           - name: QGIS 4 / Qt6
             image: ghcr.io/qgis/pyqgis4-checker:main-ubuntu

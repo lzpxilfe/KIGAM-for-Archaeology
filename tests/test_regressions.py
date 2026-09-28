@@ -53,7 +53,8 @@ def png(path, color='red'):
     path.parent.mkdir(parents=True, exist_ok=True)
     image = QImage(16, 16, QImage.Format.Format_ARGB32)
     image.fill(QColor(color))
-    assert image.save(str(path))
+    if not image.save(str(path)):
+        raise RuntimeError(f'Could not create PNG test fixture: {path}')
 
 
 class LegacyZipInfo(zipfile.ZipInfo):
