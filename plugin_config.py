@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import math
 
 
 DEFAULT_PLUGIN_CONFIG = {
@@ -35,7 +36,7 @@ DEFAULT_PLUGIN_CONFIG = {
         },
         "qml_write_encoding": "UTF-8",
         "marker_symbol_size": 6.0,
-        "fill_symbol_width": 10.0,
+        "fill_symbol_width": 50.0,
         "label_field_candidates": ["LITHOIDX", "LITHONAME"],
         "reference_layer_keywords": ["frame", "crosssectionline"],
         "litho_layer_keyword": "litho",
@@ -54,9 +55,19 @@ DEFAULT_PLUGIN_CONFIG = {
 
 def _deep_merge(base, override):
     for key, value in override.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _deep_merge(base[key], value)
-        else:
+        if key not in base:
+            continue
+        default = base[key]
+        if isinstance(default, dict):
+            if isinstance(value, dict):
+                _deep_merge(default, value)
+        elif isinstance(default, bool):
+            if isinstance(value, bool):
+                base[key] = value
+        elif isinstance(default, (float, int)):
+            if isinstance(value, (float, int)) and not isinstance(value, bool) and math.isfinite(value):
+                base[key] = value
+        elif isinstance(value, type(default)):
             base[key] = value
     return base
 
@@ -95,6 +106,9 @@ def _normalize_plugin_config(config):
     normalized = copy.deepcopy(config)
 
     zip_cfg = normalized.setdefault("zip_processor", {})
+    for key in ('fill_symbol_width', 'marker_symbol_size'):
+        if zip_cfg[key] <= 0:
+            zip_cfg[key] = DEFAULT_PLUGIN_CONFIG['zip_processor'][key]
     encodings = zip_cfg.get("candidate_encodings", [])
     if isinstance(encodings, list):
         zip_cfg["candidate_encodings"] = _normalize_encoding_list(encodings)

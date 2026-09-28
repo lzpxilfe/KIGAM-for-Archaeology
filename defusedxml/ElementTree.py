@@ -1,4 +1,4 @@
-"""ElementTree compatibility layer that rejects DTD/entity declarations."""
+"""Small safe XML reader: permit QGIS's inert DOCTYPE, never resolve entities."""
 
 from __future__ import annotations
 
@@ -48,10 +48,16 @@ def parse(source, parser=None):
     def end(tag):
         tree_builder.end(tag)
 
+    def doctype(name, system_id, public_id, has_internal_subset):
+        # QGIS writes <!DOCTYPE qgis PUBLIC 'http://mrcc.com/qgis.dtd' 'SYSTEM'>.
+        # Expat does not fetch it; internal subsets/entities remain prohibited.
+        if name != 'qgis' or has_internal_subset:
+            reject()
+
     xml_parser.StartElementHandler = start
     xml_parser.EndElementHandler = end
     xml_parser.CharacterDataHandler = tree_builder.data
-    xml_parser.StartDoctypeDeclHandler = reject
+    xml_parser.StartDoctypeDeclHandler = doctype
     xml_parser.EntityDeclHandler = reject
     xml_parser.UnparsedEntityDeclHandler = reject
     xml_parser.NotationDeclHandler = reject

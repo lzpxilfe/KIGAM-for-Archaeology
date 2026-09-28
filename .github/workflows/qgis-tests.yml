@@ -1,0 +1,40 @@
+name: QGIS regression tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: QGIS 3.40
+            image: qgis/qgis:release-3_40
+            major: 3
+          - name: QGIS 4 / Qt6
+            image: ghcr.io/qgis/pyqgis4-checker:main-ubuntu
+            major: 4
+    name: ${{ matrix.name }}
+    container:
+      image: ${{ matrix.image }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONPATH: /usr/share/qgis/python:/usr/share/qgis/python/plugins
+      EXPECTED_QGIS_MAJOR: ${{ matrix.major }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Runtime regression suite
+        run: /usr/bin/python3 tests/run_tests.py
+      - name: Validate the installable ZIP
+        run: |
+          /usr/bin/python3 tools/build_release.py --output-dir /tmp/kigam-package
+          /usr/bin/python3 -m zipfile -e /tmp/kigam-package/KIGAM_for_Archaeology_v0.1.4.zip /tmp/kigam-installed
+          KIGAM_PLUGIN_ROOT=/tmp/kigam-installed/KigamGeoDownloader /usr/bin/python3 tests/run_tests.py
+      - name: Check Qt6 migration (QGIS 4 image)
+        if: contains(matrix.name, 'Qt6')
+        run: |
+          pyqt5_to_pyqt6.py --dry_run --logfile /tmp/qt6-report.log .
+          cat /tmp/qt6-report.log
+          pyqt5_to_pyqt6.py .
+          git diff --exit-code -- '*.py'

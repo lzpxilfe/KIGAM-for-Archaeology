@@ -18,6 +18,7 @@ from qgis.core import (
     QgsProject,
     QgsRasterPipe,
     QgsRasterFileWriter,
+    QgsRasterProjector,
 )
 
 
@@ -269,7 +270,20 @@ def gdal_fill_nodata(arr: np.ndarray, nodata: float, max_dist_px: int) -> np.nda
     return filled
 
 
-def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width: int, height: int) -> bool:
+def fill_linework(values, line_mask, nodata, max_distance):
+    """Only interpolate linework; preserve transparent/background/other NoData."""
+    permanent = ~np.isfinite(values) | (values == nodata)
+    holes = line_mask & ~permanent
+    source = values.copy()
+    source[holes] = nodata
+    filled = gdal_fill_nodata(source, nodata, max_distance)
+    source[holes] = filled[holes]
+    source[permanent] = nodata
+    return source
+
+
+def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width: int, height: int,
+                  target_crs=None) -> bool:
     """
     Export a raster layer (including WMS) to a GeoTIFF.
     Uses QgsRasterFileWriter, falls back to GDAL warp if needed.
@@ -278,19 +292,27 @@ def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width
     """
     import processing
 
+    target_crs = target_crs or layer.crs()
+
     try:
         provider = layer.dataProvider()
         pipe = QgsRasterPipe()
         if not pipe.set(provider.clone()):
-            # Fallback: some providers may not support clone() cleanly.
-            if not pipe.set(provider):
-                raise RuntimeError("pipe.set(provider) failed")
+            raise RuntimeError("provider.clone() failed")
+        ctx = QgsProject.instance().transformContext()
+        if layer.crs() != target_crs:
+            projector = QgsRasterProjector()
+            projector.setCrs(layer.crs(), target_crs, ctx)
+            if not pipe.set(projector):
+                raise RuntimeError('Raster reprojection setup failed')
         writer = QgsRasterFileWriter(path)
         writer.setOutputFormat("GTiff")
-        writer.setCreateOptions(["COMPRESS=LZW", "TILED=YES"])
-        ctx = QgsProject.instance().transformContext()
+        if hasattr(writer, 'setCreationOptions'):  # QGIS 3.44+ / 4.x
+            writer.setCreationOptions(["COMPRESS=LZW", "TILED=YES"])
+        else:
+            writer.setCreateOptions(["COMPRESS=LZW", "TILED=YES"])
         res = writer.writeRaster(pipe, int(width), int(
-            height), extent, layer.crs(), ctx)
+            height), extent, target_crs, ctx)
         if res != 0:
             print(f"[GeoChem] writeRaster returned {res}")
             raise RuntimeError(f"writeRaster failed ({res})")
@@ -311,14 +333,14 @@ def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width
             {
                 "INPUT": layer,
                 "SOURCE_CRS": None,
-                "TARGET_CRS": None,
+                "TARGET_CRS": target_crs,
                 "RESAMPLING": 0,  # Nearest (preserve legend colors)
                 "NODATA": None,
                 "TARGET_RESOLUTION": px,
                 "OPTIONS": "COMPRESS=LZW|TILED=YES",
                 "DATA_TYPE": 0,
                 "TARGET_EXTENT": extent_str,
-                "TARGET_EXTENT_CRS": layer.crs().authid() if layer.crs() else None,
+                "TARGET_EXTENT_CRS": target_crs,
                 "MULTITHREADING": False,
                 "EXTRA": "",
                 "OUTPUT": path,

@@ -6,6 +6,32 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.1.4] – 2026-09-28
+
+### Fixed
+- Apply DBF encodings through `setProviderEncoding`; invalid `|encoding=` OGR URIs previously discarded all explicit encoding candidates in QGIS 3.40.
+- Validate CPG declarations and sample raw DBF bytes; add manual CP949 / UTF-8 / EUC-KR overrides.
+- Decode legacy Korean ZIP filenames, discover bounded nested archives and associate each map sheet with its own symbols.
+- Accept QGIS's inert DOCTYPE while rejecting entity declarations/internal subsets; support old `prop` and modern `Option` QML image paths, and QML without a sym directory.
+- Isolate SHP/style failures, expose load counts and warnings, and retain extracted sources in the QGIS profile.
+- Use metric output grids, explicit raster reprojection and pixel limits; preserve NoData during linework interpolation.
+- Export geology as integer categories with UTF-8 CSV codebooks; convert GeoTIFF to ASC; reject mixed or multiple-raster selections instead of silently discarding them.
+- Transform zoom extents into the map canvas CRS; list exportable vectors by fields rather than filenames; validate malformed config section types.
+
+### Added
+- Polygon raster-pattern multiplier (0.5–6×; default 2× as a starting point for 1:25,000), including existing selected layers and non-compounding updates.
+- Side-by-side pattern preview at a shared scale; private layer clones keep cancel non-destructive. Restore original sizes, handle intrinsic pixel-sized images and rebase after manual style changes.
+- Isolate corrupt nested ZIPs, support dot-prefixed ZIP paths and tolerate damaged optional Unicode filename metadata.
+- Preserve valid QML categories/symbols when some PNGs are missing; resolve local relative image paths outside `sym/`; surface missing-symbol warnings in the dialog.
+- Runtime regression suite, QGIS 3.40 / Qt6 CI configuration, release builder and validation checklist.
+
+### Changed
+- Minimum QGIS is now 3.40; maximum metadata version is 4.99. Qt imports and moved QGIS enums use current APIs. See RELEASE_CHECKLIST.md for tested runtimes and remaining compatibility limits.
+- Class IDs are deterministic within one export and written to `.categories.csv`; raw alphanumeric geology codes are no longer passed to GDAL as numeric values.
+- Citation metadata now matches version 0.1.4 and its release date.
+
+---
+
 ## [0.1.3] – 2026-07-27
 
 ### Fixed
@@ -68,7 +94,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Proof-of-concept ZIP extraction and Shapefile loading implemented.
 - Basic symbol-based categorised renderer applied from `sym/` PNGs.
 
-[0.1.3]: https://github.com/lzpxilfe/KIGAM-for-Archaeology/compare/v0.1.2...HEAD
+[0.1.4]: https://github.com/lzpxilfe/KIGAM-for-Archaeology/releases/tag/v0.1.4
+[0.1.3]: https://github.com/lzpxilfe/KIGAM-for-Archaeology/commit/51679ea
 [0.1.2]: https://github.com/lzpxilfe/KIGAM-for-Archaeology/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/lzpxilfe/KIGAM-for-Archaeology/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/lzpxilfe/KIGAM-for-Archaeology/releases/tag/v0.1.0

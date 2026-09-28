@@ -1,11 +1,12 @@
 [general]
 name=KIGAM for Archaeology
-qgisMinimumVersion=3.0
+qgisMinimumVersion=3.40
+qgisMaximumVersion=4.99
 description=Load KIGAM 1:50,000 ZIP maps, apply symbols/labels, and export analysis rasters with configurable behavior.
-version=0.1.3
+version=0.1.4
 author=balguljang2(lzpxilfe)
 email=lzpxilfe@gmail.com
-about=This plugin loads KIGAM geological-map ZIP packages, applies sym/QML styles with CP949-safe matching, and supports GeoChem raster conversion/export workflows. v0.1.3: auto-detect UTF-8 vs CP949 encoding via Korean text quality scoring; increase default litho fill symbol width to 50mm for 1:50,000 scale maps.
+about=Load KIGAM Shapefile ZIP packages with validated CP949/UTF-8 decoding, Korean archive filenames, nested ZIPs and per-sheet QML/PNG styles. Adjust polygon pattern scale for 1:25,000 maps, export categorical rasters with CSV codebooks, and estimate GeoChem values from legend colors. QGIS 3.40+ and Qt6/QGIS 4 API support; see release validation notes for tested runtimes.
 tracker=https://github.com/lzpxilfe/KIGAM-for-Archaeology/issues
 repository=https://github.com/lzpxilfe/KIGAM-for-Archaeology
 homepage=https://github.com/lzpxilfe/KIGAM-for-Archaeology

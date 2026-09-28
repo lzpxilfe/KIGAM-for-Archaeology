@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
 import os
+import ntpath
 import re
-import zipfile
 import tempfile
+import shutil
 import unicodedata
+from pathlib import Path
+from .archive_utils import extract_archive
+from .encoding_utils import detect_dbf_encoding, sidecar
+from .pattern_utils import scale_patterns
 from .defusedxml import ElementTree as ET
 from .plugin_config import PLUGIN_CONFIG, DEFAULT_PLUGIN_CONFIG
 from qgis.core import (
     QgsProject,
+    QgsApplication,
     QgsVectorLayer,
     QgsRasterMarkerSymbolLayer,
     QgsRasterFillSymbolLayer,
@@ -15,6 +21,7 @@ from qgis.core import (
     QgsFillSymbol,
     QgsCategorizedSymbolRenderer,
     QgsRendererCategory,
+    QgsRenderContext,
     QgsMessageLog,
     Qgis
 )
@@ -37,14 +44,6 @@ CANDIDATE_ENCODINGS = ZIP_CONFIG.get("candidate_encodings", list(
 if not isinstance(CANDIDATE_ENCODINGS, list) or not CANDIDATE_ENCODINGS:
     CANDIDATE_ENCODINGS = list(
         DEFAULT_ZIP_CONFIG.get("candidate_encodings", [None]))
-
-ENCODING_PREFERENCE = ZIP_CONFIG.get(
-    "encoding_preference",
-    dict(DEFAULT_ZIP_CONFIG.get("encoding_preference", {"DEFAULT": 0}))
-)
-if not isinstance(ENCODING_PREFERENCE, dict):
-    ENCODING_PREFERENCE = dict(DEFAULT_ZIP_CONFIG.get(
-        "encoding_preference", {"DEFAULT": 0}))
 
 DEFAULT_FONT_FAMILY = str(
     LABEL_FONT_CONFIG.get("default_family", DEFAULT_LABEL_FONT_CONFIG.get(
@@ -94,16 +93,26 @@ if not LABEL_FIELD_CANDIDATES:
 
 
 class ZipProcessor:
-    def __init__(self):
-        # Temp directory to extract files
+    def __init__(self, extract_root=None, log_callback=None):
+        self.log_callback = log_callback
+        self.last_report = {}
+        # Keep sources with the QGIS profile so saved projects survive temp cleanup.
         extract_root_name = str(
             ZIP_CONFIG.get("extract_root_name", DEFAULT_ZIP_CONFIG.get(
                 "extract_root_name", "KIGAM_Extract"))
         ).strip() or "KIGAM_Extract"
-        self.extract_root = os.path.join(
-            tempfile.gettempdir(), extract_root_name)
+        self.extract_root = extract_root or os.path.join(
+            QgsApplication.qgisSettingsDirPath(), os.path.basename(extract_root_name))
         if not os.path.exists(self.extract_root):
             os.makedirs(self.extract_root)
+
+    def _log(self, message, warning=False):
+        QgsMessageLog.logMessage(message, 'KIGAM Plugin',
+                                 Qgis.MessageLevel.Warning if warning else Qgis.MessageLevel.Info)
+        if warning:
+            self.last_report.setdefault('warnings', []).append(message)
+        if self.log_callback:
+            self.log_callback(message)
 
     @staticmethod
     def _normalize_token(text):
@@ -197,17 +206,21 @@ class ZipProcessor:
         raw_map = {}
         normalized_map = {}
 
-        for file_name in os.listdir(sym_path):
-            if not file_name.lower().endswith(".png"):
+        if not sym_path:
+            return raw_map, normalized_map
+        for png in sorted(Path(sym_path).rglob('*')):
+            if not png.is_file() or png.suffix.lower() != '.png':
                 continue
 
-            symbol_name = os.path.splitext(file_name)[0]
-            png_path = os.path.join(sym_path, file_name)
-            raw_map[symbol_name] = png_path
+            symbol_name = png.stem
+            png_path = str(png)
+            raw_map[symbol_name] = png_path if symbol_name not in raw_map else None
 
             for key in self._value_candidates(symbol_name):
                 if key not in normalized_map:
                     normalized_map[key] = png_path
+                elif normalized_map[key] != png_path:
+                    normalized_map[key] = None  # Do not silently choose an ambiguous image.
 
         return raw_map, normalized_map
 
@@ -222,11 +235,17 @@ class ZipProcessor:
         if raw_value in raw_sym_files:
             return raw_sym_files[raw_value]
 
-        for candidate in self._value_candidates(raw_value):
-            if candidate in normalized_sym_files:
-                return normalized_sym_files[candidate]
+        matches = {normalized_sym_files[candidate] for candidate in self._value_candidates(raw_value)
+                   if normalized_sym_files.get(candidate)}
+        return next(iter(matches)) if len(matches) == 1 else None
 
-        return None
+    @staticmethod
+    def _image_properties(node):
+        for prop in node.iter():
+            if prop.tag == 'prop' and prop.get('k') == 'imageFile':
+                yield prop, 'v'
+            elif prop.tag == 'Option' and prop.get('name') == 'imageFile':
+                yield prop, 'value'
 
     @staticmethod
     def _parse_qml_mapping(qml_path):
@@ -256,11 +275,11 @@ class ZipProcessor:
             if not symbol_id:
                 continue
 
-            image_prop = symbol_node.find(".//prop[@k='imageFile']")
-            if image_prop is None:
+            image_props = list(ZipProcessor._image_properties(symbol_node))
+            if not image_props:
                 continue
-
-            image_value = (image_prop.get("v") or "").replace("\\", "/")
+            image_prop, value_key = image_props[0]
+            image_value = (image_prop.get(value_key) or "").replace("\\", "/")
             image_name = os.path.basename(image_value)
             image_stem = os.path.splitext(image_name)[0].strip()
             if image_stem:
@@ -328,6 +347,8 @@ class ZipProcessor:
         priority_fields = list(SYMBOL_PRIORITY_FIELDS)
         all_fields = [f.name() for f in layer.fields()]
 
+        field_names = {name.casefold(): name for name in all_fields}
+        priority_fields = [field_names.get(name.casefold(), name) for name in priority_fields]
         if qml_field and qml_field in all_fields:
             priority_fields = [qml_field] + \
                 [f for f in priority_fields if f != qml_field]
@@ -362,127 +383,20 @@ class ZipProcessor:
 
         return best_field, max_matches, best_value_count
 
-    @staticmethod
-    def _encoding_preference_rank(encoding):
-        if encoding is None:
-            return int(ENCODING_PREFERENCE.get("DEFAULT", 0))
-
-        key = str(encoding).upper()
-        return int(ENCODING_PREFERENCE.get(key, ENCODING_PREFERENCE.get("DEFAULT", 0)))
-
-    @staticmethod
-    def _score_text_quality(text):
-        """
-        Return a heuristic quality score for a decoded string.
-        - Rewards Hangul (Korean) characters and normal printable ASCII/CJK.
-        - Penalises Latin-1 replacement characters (\x80-\x9F, \xC0+) that
-          commonly appear when CP949/EUC-KR bytes are mis-decoded as UTF-8,
-          or when UTF-8 bytes are mis-decoded as CP949.
-        A higher score means the text looks more plausible for the encoding.
-        """
-        if not text:
-            return 0
-        score = 0
-        for ch in text:
-            cp = ord(ch)
-            if 0xAC00 <= cp <= 0xD7A3:   # Hangul syllables — very good
-                score += 3
-            elif 0x1100 <= cp <= 0x11FF:  # Hangul Jamo
-                score += 2
-            elif 0x3130 <= cp <= 0x318F:  # Hangul Compatibility Jamo
-                score += 2
-            elif 0x4E00 <= cp <= 0x9FFF:  # CJK Unified Ideographs
-                score += 1
-            elif 0x20 <= cp <= 0x7E:      # Normal printable ASCII
-                score += 1
-            elif 0xC0 <= cp <= 0xFF:      # Latin Extended — mojibake indicator
-                score -= 2
-            elif 0x80 <= cp <= 0x9F:      # C1 control chars — strong mojibake
-                score -= 4
-            elif cp == 0xFFFD:            # Unicode replacement char — failed decode
-                score -= 5
-        return score
-
-    @classmethod
-    def _layer_text_score(cls, layer, max_fields=10, max_values=30):
-        """
-        Sample string field values from *layer* and return an aggregate
-        text-quality score using _score_text_quality().
-        Only the first *max_fields* string fields and *max_values* unique
-        values per field are examined to keep this fast.
-        """
-        total = 0
-        string_fields = [
-            f.name() for f in layer.fields()
-            if f.typeName().lower() in ("string", "varchar", "text", "character")
-               or str(f.type()) in ("10",)  # QVariant.String == 10
-        ]
-        for field_name in string_fields[:max_fields]:
-            idx = layer.fields().indexOf(field_name)
-            if idx < 0:
-                continue
-            for val in list(layer.uniqueValues(idx))[:max_values]:
-                if val is None:
-                    continue
-                total += cls._score_text_quality(str(val))
-        return total
-
-    def _load_layer_with_best_encoding(self, shp_path, layer_name, sym_path=None, qml_path=None):
-        raw_sym_files, normalized_sym_files = self._build_symbol_index(
-            sym_path) if sym_path else ({}, {})
-        qml_field, qml_value_to_image = self._parse_qml_mapping(qml_path)
-
-        qml_normalized_map = {}
-        for raw_value, image_stem in qml_value_to_image.items():
-            for candidate in self._value_candidates(raw_value):
-                if candidate not in qml_normalized_map:
-                    qml_normalized_map[candidate] = image_stem
-
-        candidate_encodings = list(CANDIDATE_ENCODINGS)
-        best_layer = None
-        best_encoding = None
-        best_field = None
-        best_matches = -1
-        best_total_values = 0
-        best_score = None
-
-        for encoding in candidate_encodings:
-            uri = shp_path if encoding is None else f"{shp_path}|encoding={encoding}"
-            layer = QgsVectorLayer(uri, layer_name, "ogr")
-            if not layer.isValid():
-                continue
-
-            if raw_sym_files:
-                field_name, matches, total_values = self._find_best_matching_field(
-                    layer,
-                    raw_sym_files,
-                    normalized_sym_files,
-                    qml_field,
-                    qml_value_to_image,
-                    qml_normalized_map
-                )
-            else:
-                field_name, matches, total_values = (None, 0, 0)
-
-            # Primary sort key: symbol match count.
-            # Secondary key: heuristic text-quality score (detects garbled Korean).
-            # Tertiary key: explicit encoding preference from config.
-            # Using text quality as secondary ensures that when there are no
-            # symbol matches (matches == 0 for all encodings), the encoding that
-            # produces the most valid Korean/Unicode text wins, rather than always
-            # falling back to the config preference rank (which would always pick
-            # CP949 and garble UTF-8 encoded DBF files).
-            text_score = self._layer_text_score(layer)
-            score = (matches, text_score, self._encoding_preference_rank(encoding))
-            if best_score is None or score > best_score:
-                best_score = score
-                best_layer = layer
-                best_encoding = encoding
-                best_field = field_name
-                best_matches = matches
-                best_total_values = total_values
-
-        return best_layer, best_encoding, best_field, best_matches, best_total_values
+    def _load_layer_with_best_encoding(self, shp_path, layer_name, sym_path=None,
+                                       qml_path=None, encoding_override=None):
+        encoding, reason = detect_dbf_encoding(shp_path, encoding_override, CANDIDATE_ENCODINGS)
+        # OGR does not accept |encoding=... as a QGIS data-source URI component.
+        options = QgsVectorLayer.LayerOptions()
+        options.loadDefaultStyle = False  # Apply only the validated/relinked sidecar below.
+        layer = QgsVectorLayer(str(shp_path), layer_name, "ogr", options)
+        if not layer.isValid():
+            return None, encoding, None, 0, 0
+        layer.setProviderEncoding(encoding)
+        layer.setCustomProperty('kigam/encoding', encoding)
+        layer.setCustomProperty('kigam/encoding_reason', reason)
+        self._log(f'{layer_name}: {encoding} ({reason})')
+        return layer, encoding, None, 0, 0
 
     def _build_relinked_qml(self, qml_path, raw_sym_files, normalized_sym_files):
         if not qml_path or not os.path.exists(qml_path):
@@ -491,14 +405,15 @@ class ZipProcessor:
         try:
             tree = ET.parse(qml_path)
             root = tree.getroot()
-        except Exception:
+        except Exception as exc:
+            self._log(f'QML parse failed: {qml_path}: {exc}', True)
             return None, 0, 0
 
         total_image_props = 0
         relinked_count = 0
-        for prop in root.findall(".//prop[@k='imageFile']"):
+        for prop, value_key in self._image_properties(root):
             total_image_props += 1
-            image_value = (prop.get("v") or "").replace("\\", "/")
+            image_value = (prop.get(value_key) or "").replace("\\", "/")
             image_name = os.path.basename(image_value)
             image_stem = os.path.splitext(image_name)[0].strip()
             if not image_stem:
@@ -507,13 +422,24 @@ class ZipProcessor:
             png_path = self._resolve_symbol_path(
                 image_stem, raw_sym_files, normalized_sym_files)
             if not png_path:
+                candidate = (Path(image_value) if ntpath.isabs(image_value) else Path(qml_path).parent / image_value).resolve()
+                boundary = Path(self.last_report.get('extract_dir', Path(qml_path).parent)).resolve()
+                if candidate.is_relative_to(boundary) and candidate.is_file():
+                    png_path = str(candidate)
+            if not png_path:
+                # Never leave an obsolete absolute/remote path for QGIS to load.
+                # Only this symbol layer will be replaced after style loading.
+                prop.set(value_key, '')
                 continue
 
-            prop.set("v", png_path.replace("\\", "/"))
+            prop.set(value_key, png_path.replace("\\", "/"))
             relinked_count += 1
 
         if total_image_props == 0:
-            return None, 0, 0
+            return qml_path, 0, 0
+
+        if relinked_count != total_image_props:
+            self._log(f'QML images unresolved: {qml_path} ({relinked_count}/{total_image_props}); replacing missing images only', True)
 
         relinked_qml = os.path.join(
             os.path.dirname(qml_path),
@@ -522,6 +448,32 @@ class ZipProcessor:
         tree.write(relinked_qml, encoding=QML_WRITE_ENCODING,
                    xml_declaration=True)
         return relinked_qml, relinked_count, total_image_props
+
+    def _repair_missing_images(self, layer):
+        from qgis.PyQt.QtGui import QImageReader
+
+        def repair(symbol):
+            count = 0
+            for index, symbol_layer in enumerate(symbol.symbolLayers()):
+                child = symbol_layer.subSymbol()
+                if child is not None:
+                    count += repair(child)
+                fallback = None
+                if isinstance(symbol_layer, QgsRasterFillSymbolLayer):
+                    if not QImageReader(symbol_layer.imageFilePath()).canRead():
+                        fallback = QgsFillSymbol.createSimple({'color': '#cccccc', 'outline_color': '#666666'})
+                elif isinstance(symbol_layer, QgsRasterMarkerSymbolLayer):
+                    if not QImageReader(symbol_layer.path()).canRead():
+                        fallback = QgsMarkerSymbol.createSimple({'color': '#cc6666', 'size': '3'})
+                if fallback is not None:
+                    symbol.changeSymbolLayer(index, fallback.symbolLayer(0).clone())
+                    count += 1
+            return count
+
+        count = sum(repair(symbol) for symbol in layer.renderer().symbols(QgsRenderContext())) if layer.renderer() else 0
+        if count:
+            self._log(f'{layer.name()}: {count} missing/unreadable raster symbol(s) replaced; other QML styles preserved', True)
+        return count
 
     @staticmethod
     def _load_named_style(layer, style_path):
@@ -553,114 +505,98 @@ class ZipProcessor:
             suffix += 1
         return unique_group_name
 
-    def process_zip(self, zip_path, font_family=None, font_size=10):
-        """
-        Extracts ZIP, loads shapefiles, and applies styling.
-        """
-        if not font_family:
-            font_family = DEFAULT_FONT_FAMILY
+    @staticmethod
+    def _local_sym_path(shp_path, extract_dir):
+        current = Path(shp_path).parent
+        boundary = Path(extract_dir)
+        while True:
+            matches = [p for p in current.iterdir() if p.is_dir() and p.name.casefold() == 'sym']
+            if len(matches) == 1:
+                return str(matches[0])
+            if current == boundary:
+                break
+            current = current.parent
+        # A single shared symbol directory is unambiguous; multiple map sheets are not.
+        matches = [p for p in boundary.rglob('*') if p.is_dir() and p.name.casefold() == 'sym']
+        return str(matches[0]) if len(matches) == 1 else None
 
-        zip_basename = os.path.splitext(os.path.basename(zip_path))[0]
-        safe_prefix = re.sub(r"[^A-Za-z0-9._-]+", "_",
-                             zip_basename).strip("_") or "kigam_map"
-        # Keep a unique extraction folder per load so symbol file paths remain valid.
-        extract_dir = tempfile.mkdtemp(
-            prefix=f"{safe_prefix}_", dir=self.extract_root)
-
-        # Extract ZIP
+    def process_zip(self, zip_path, font_family=None, font_size=10, encoding_override=None, pattern_scale=2.0):
+        """Load every discovered SHP independently and expose all failures to the UI."""
+        font_family = font_family or DEFAULT_FONT_FAMILY
+        zip_basename = Path(zip_path).stem
+        safe_prefix = re.sub(r"[^A-Za-z0-9._-]+", "_", zip_basename).strip("_") or "kigam_map"
+        extract_dir = tempfile.mkdtemp(prefix=f"{safe_prefix}_", dir=self.extract_root)
+        self.last_report = {'archive': str(zip_path), 'extract_dir': extract_dir,
+                            'discovered': 0, 'loaded': 0, 'failed': [], 'warnings': []}
         try:
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-        except Exception as e:
-            QgsMessageLog.logMessage(
-                f"Failed to extract ZIP: {str(e)}", "KIGAM Plugin", Qgis.MessageLevel.Critical)
+            archive_report = extract_archive(zip_path, extract_dir)
+            for warning in archive_report['warnings']:
+                self._log(warning, True)
+        except Exception as exc:
+            self._log(f'ZIP extraction failed: {exc}', True)
+            owned_dir, parent = Path(extract_dir).resolve(), Path(self.extract_root).resolve()
+            if owned_dir != parent and owned_dir.is_relative_to(parent):
+                shutil.rmtree(owned_dir)
             return []
 
-        # Locate 'sym' folder
-        sym_path = None
-        for root, dirs, files in os.walk(extract_dir):
-            sym_dir = next((d for d in dirs if d.lower() == 'sym'), None)
-            if sym_dir:
-                sym_path = os.path.join(root, sym_dir)
-                break
-
-        if not sym_path:
-            QgsMessageLog.logMessage(
-                "No 'sym' folder found in the ZIP.", "KIGAM Plugin", Qgis.MessageLevel.Warning)
-
-        # Load Shapefiles
+        paths = sorted(p for p in Path(extract_dir).rglob('*')
+                       if p.is_file() and p.suffix.lower() == '.shp')
+        self.last_report['discovered'] = len(paths)
+        unsupported = [p.relative_to(extract_dir).as_posix() for p in Path(extract_dir).rglob('*')
+                       if p.suffix.lower() in ('.gpkg', '.gdb', '.dxf', '.tif', '.tiff', '.img')]
+        if unsupported:
+            self._log('Unsupported ZIP datasets (SHP loader): ' + ', '.join(sorted(unsupported)[:20]), True)
+        if not paths:
+            self._log('No Shapefiles found. This loader supports SHP ZIP packages, including nested ZIPs.', True)
+            return []
         tree_root = QgsProject.instance().layerTreeRoot()
-        loaded_layers = []
-        target_group = None
-        for root, dirs, files in os.walk(extract_dir):
-            for file in files:
-                if file.lower().endswith(".shp"):
-                    shp_path = os.path.join(root, file)
-                    layer_name = os.path.splitext(file)[0]
-                    qml_path = os.path.join(root, f"{layer_name}.qml")
-                    qml_path = qml_path if os.path.exists(qml_path) else None
-                    layer, used_encoding, pre_field, pre_matches, pre_total = self._load_layer_with_best_encoding(
-                        shp_path,
-                        layer_name,
-                        sym_path=sym_path,
-                        qml_path=qml_path
-                    )
-
-                    if not layer or not layer.isValid():
-                        QgsMessageLog.logMessage(
-                            f"Failed to load layer: {shp_path}", "KIGAM Plugin", Qgis.MessageLevel.Warning)
-                        continue
-
-                    if used_encoding is None:
-                        enc_label = "default"
-                    else:
-                        enc_label = used_encoding
-                    QgsMessageLog.logMessage(
-                        f"{layer_name}: loaded with encoding '{enc_label}' (pre-match {pre_matches}/{pre_total}, field={pre_field})",
-                        "KIGAM Plugin",
-                        Qgis.MessageLevel.Info
-                    )
-
-                    if target_group is None:
-                        unique_group_name = self._build_unique_group_name(
-                            tree_root, zip_basename)
-                        target_group = tree_root.addGroup(unique_group_name)
-                        QgsMessageLog.logMessage(
-                            f"Created layer group: {unique_group_name}",
-                            "KIGAM Plugin",
-                            Qgis.MessageLevel.Info
-                        )
-
-                    # Add to project without auto-placement, then place directly in this ZIP group.
-                    # This avoids inheriting currently selected layer-tree insertion context.
-                    QgsProject.instance().addMapLayer(layer, False)
-                    target_group.addLayer(layer)
-                    loaded_layers.append(layer)
-
-                    # Apply Styling if sym path exists
-                    if sym_path:
-                        self.apply_sym_styling(layer, sym_path, qml_path)
-
-                    # Apply Labeling for Litho layers
-                    if LITHO_LAYER_KEYWORD in layer_name.lower():
-                        self.apply_labeling(layer, font_family, font_size)
-
-        # Reorder inside the dedicated group.
-        if target_group is not None and loaded_layers:
+        loaded_layers, target_group = [], None
+        for shp in paths:
+            try:
+                if sidecar(shp, '.shx') is None:
+                    raise ValueError('Missing SHX sidecar')
+                sym_path = self._local_sym_path(shp, extract_dir)
+                qml = sidecar(shp, '.qml')
+                layer, *_ = self._load_layer_with_best_encoding(
+                    str(shp), shp.stem, sym_path, str(qml) if qml else None, encoding_override)
+                if layer is None or not layer.isValid():
+                    raise ValueError('OGR could not open the Shapefile')
+                if target_group is None:
+                    target_group = tree_root.addGroup(self._build_unique_group_name(tree_root, zip_basename))
+                QgsProject.instance().addMapLayer(layer, False)
+                target_group.addLayer(layer)
+                loaded_layers.append(layer)
+            except Exception as exc:
+                self.last_report['failed'].append(str(shp.relative_to(extract_dir)))
+                self._log(f'{shp.name}: load failed: {exc}', True)
+                continue
+            # Style failures must never abort the remaining maps in a batch.
+            try:
+                self.apply_sym_styling(layer, sym_path, str(qml) if qml else None)
+                pattern_report = scale_patterns(layer, pattern_scale)
+                if pattern_report['skipped']:
+                    self._log(f'{shp.name}: {pattern_report["skipped"]} pattern(s) need manual size/data-defined review', True)
+                if LITHO_LAYER_KEYWORD in shp.stem.lower() and not layer.labelsEnabled():
+                    self.apply_labeling(layer, font_family, font_size)
+            except Exception as exc:
+                self._log(f'{shp.name}: loaded, but styling failed: {exc}', True)
+        if target_group is not None:
             self.organize_layers(target_group, loaded_layers)
-
+        self.last_report['loaded'] = len(loaded_layers)
+        self._log(f'{zip_basename}: {len(loaded_layers)}/{len(paths)} SHP loaded; '
+                  f'{len(self.last_report["failed"])} failed')
         return loaded_layers
 
+    @staticmethod
+    def apply_pattern_scale(layer, multiplier):
+        return scale_patterns(layer, multiplier)['changed']
 
     def apply_sym_styling(self, layer, sym_path, qml_path=None):
         """
         Analyzes the layer to find a field matching the symbols in sym_path,
         and applies a categorized renderer using the PNGs.
         """
-        raw_sym_files, normalized_sym_files = self._build_symbol_index(
-            sym_path)
-        if not raw_sym_files:
-            return
+        raw_sym_files, normalized_sym_files = self._build_symbol_index(sym_path)
 
         # Prefer native QML style when available, but relink image paths to extracted sym folder.
         relinked_qml, relinked_count, total_image_props = self._build_relinked_qml(
@@ -669,19 +605,20 @@ class ZipProcessor:
             normalized_sym_files
         )
         if relinked_qml and self._load_named_style(layer, relinked_qml):
+            renderer = layer.renderer()
+            if isinstance(renderer, QgsCategorizedSymbolRenderer):
+                fields = {field.name().casefold(): field.name() for field in layer.fields()}
+                attribute = renderer.classAttribute()
+                renderer.setClassAttribute(fields.get(attribute.casefold(), attribute))
+            self._repair_missing_images(layer)
             layer.triggerRepaint()
-            QgsMessageLog.logMessage(
-                f"Applied sidecar QML to {layer.name()} (relinked {relinked_count}/{total_image_props} image paths)",
-                "KIGAM Plugin",
-                Qgis.MessageLevel.Success
-            )
+            self._log(f'Applied QML: {layer.name()} ({relinked_count}/{total_image_props} image paths linked)')
             return
         if relinked_qml:
-            QgsMessageLog.logMessage(
-                f"Failed to apply relinked QML to {layer.name()}, falling back to sym-based renderer",
-                "KIGAM Plugin",
-                Qgis.MessageLevel.Warning
-            )
+            self._log(f'QML could not be applied: {layer.name()}; trying sym renderer', True)
+
+        if not raw_sym_files:
+            return
 
         qml_field, qml_value_to_image = self._parse_qml_mapping(qml_path)
 
@@ -701,16 +638,9 @@ class ZipProcessor:
             qml_normalized_map
         )
 
-        if not best_field:
+        if not best_field or max_matches <= 0:
             all_fields = [f.name() for f in layer.fields()]
-            QgsMessageLog.logMessage(
-                (
-                    f"No matching field found for styling in layer {layer.name()}. "
-                    f"Available fields: {', '.join(all_fields)}"
-                ),
-                "KIGAM Plugin",
-                Qgis.MessageLevel.Info,
-            )
+            self._log(f'{layer.name()}: PNG symbols did not match fields: {", ".join(all_fields)}', True)
             return
 
         QgsMessageLog.logMessage(
@@ -721,7 +651,7 @@ class ZipProcessor:
         unique_values = layer.uniqueValues(layer.fields().indexOf(best_field))
         missing_values = []
 
-        for val in unique_values:
+        for val in sorted(unique_values, key=str):
             val_str = str(val)
             symbol = None
 
@@ -734,7 +664,7 @@ class ZipProcessor:
             )
             if png_path:
 
-                if layer.geometryType() == 0:  # Point
+                if layer.geometryType() == Qgis.GeometryType.Point:  # Point
                     # Create Raster Marker
                     symbol_layer = QgsRasterMarkerSymbolLayer(png_path)
                     # Configurable default size
@@ -742,7 +672,7 @@ class ZipProcessor:
                     symbol = QgsMarkerSymbol()
                     symbol.changeSymbolLayer(0, symbol_layer)
 
-                elif layer.geometryType() == 2:  # Polygon
+                elif layer.geometryType() == Qgis.GeometryType.Polygon:  # Polygon
                     # Create Raster Fill
                     symbol_layer = QgsRasterFillSymbolLayer()
                     symbol_layer.setImageFilePath(png_path)
@@ -759,9 +689,9 @@ class ZipProcessor:
                 # Add a fallback category with default style if needed,
                 # or just let QGIS handle unclassified (it usually doesn't show them if not added)
                 # Here we recreate a default symbol for the geometry type
-                if layer.geometryType() == 0:
+                if layer.geometryType() == Qgis.GeometryType.Point:
                     symbol = QgsMarkerSymbol.createSimple({'color': '#ff0000'})
-                elif layer.geometryType() == 2:
+                elif layer.geometryType() == Qgis.GeometryType.Polygon:
                     symbol = QgsFillSymbol.createSimple(
                         {'color': '#cccccc', 'outline_color': 'black'})
                 else:
@@ -781,11 +711,7 @@ class ZipProcessor:
                 preview = ", ".join(missing_values[:8])
                 if len(missing_values) > 8:
                     preview += ", ..."
-                QgsMessageLog.logMessage(
-                    f"{layer.name()}: {len(missing_values)} value(s) had no matching PNG in sym ({preview})",
-                    "KIGAM Plugin",
-                    Qgis.MessageLevel.Warning
-                )
+                self._log(f'{layer.name()}: {len(missing_values)} value(s) had no matching PNG in sym ({preview})', True)
 
     def apply_labeling(self, layer, font_family, font_size):
         from qgis.core import (
@@ -800,11 +726,14 @@ class ZipProcessor:
         if not fields:
             return
 
-        label_field = fields[0]
+        label_field = None
+        field_names = {name.casefold(): name for name in fields}
         for candidate in LABEL_FIELD_CANDIDATES:
-            if candidate in fields:
-                label_field = candidate
+            if candidate.casefold() in field_names:
+                label_field = field_names[candidate.casefold()]
                 break
+        if label_field is None:
+            return
         settings.fieldName = label_field
 
         # Text Format
@@ -822,7 +751,7 @@ class ZipProcessor:
 
         # Placement: Horizontal (0), Free (1), etc.
         # For Polygons, we want "Over Point" or "Horizontal"
-        settings.placement = QgsPalLayerSettings.Placement.Horizontal
+        settings.placement = Qgis.LabelPlacement.Horizontal
 
         # Smart Placement Logic
         settings.centroidInside = True  # Force label inside
@@ -853,9 +782,9 @@ class ZipProcessor:
             name = layer.name().lower()
             if any(keyword in name for keyword in REFERENCE_LAYER_KEYWORDS):
                 reference.append(layer)
-            elif layer.geometryType() == 0:  # Point
+            elif layer.geometryType() == Qgis.GeometryType.Point:  # Point
                 points.append(layer)
-            elif layer.geometryType() == 1:  # Line
+            elif layer.geometryType() == Qgis.GeometryType.Line:  # Line
                 lines.append(layer)
             else:  # Polygon
                 polygons.append(layer)

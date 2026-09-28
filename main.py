@@ -1,12 +1,12 @@
 from qgis.PyQt.QtCore import QCoreApplication, QUrl, Qt
 from qgis.PyQt.QtWidgets import (
-    QAction, QMessageBox, QFileDialog, QDialog, QVBoxLayout,
+    QMessageBox, QFileDialog, QDialog, QVBoxLayout,
     QHBoxLayout, QLabel, QFontComboBox, QSpinBox, QDialogButtonBox,
     QPushButton, QLineEdit, QGroupBox, QFormLayout, QComboBox,
-    QListWidget, QListWidgetItem, QTextEdit
+    QListWidget, QListWidgetItem, QTextEdit, QDoubleSpinBox, QScrollArea, QWidget
 )
-from qgis.PyQt.QtGui import QIcon, QDesktopServices, QFont
-from qgis.core import QgsProject, QgsCoordinateTransform
+from qgis.PyQt.QtGui import QIcon, QDesktopServices, QFont, QAction
+from qgis.core import QgsProject, QgsCoordinateTransform, Qgis
 import processing
 
 import os.path
@@ -16,7 +16,9 @@ import uuid
 import numpy as np
 from osgeo import gdal
 from .zip_processor import ZipProcessor
-from . import geochem_utils
+from .pattern_utils import scale_patterns
+from .pattern_preview import PatternPreviewDialog
+from . import geochem_utils, raster_utils
 from .plugin_config import PLUGIN_CONFIG, DEFAULT_PLUGIN_CONFIG
 
 
@@ -168,7 +170,7 @@ class MainDialog(QDialog):
         super().__init__(parent)
         self.iface = iface
         self.setWindowTitle("KIGAM Tools")
-        self.resize(450, 450)
+        self.resize(600, 780)
 
         layout = QVBoxLayout()
 
@@ -213,6 +215,26 @@ class MainDialog(QDialog):
         self.size_spin.setValue(LABEL_FONT_SIZE_DEFAULT)
         self.size_spin.setToolTip("지층 코드 라벨의 크기를 설정합니다.")
         load_layout.addRow("글꼴 크기:", self.size_spin)
+
+        self.encoding_combo = QComboBox()
+        self.encoding_combo.addItem('자동 (CPG / DBF 바이트 확인)', None)
+        for encoding in ('CP949', 'UTF-8', 'EUC-KR'):
+            self.encoding_combo.addItem(encoding, encoding)
+        load_layout.addRow('속성 인코딩:', self.encoding_combo)
+
+        self.pattern_scale_spin = QDoubleSpinBox()
+        self.pattern_scale_spin.setRange(0.5, 6.0)
+        self.pattern_scale_spin.setSingleStep(0.5)
+        self.pattern_scale_spin.setValue(2.0)
+        self.pattern_scale_spin.setSuffix(' 배')
+        self.pattern_scale_spin.setToolTip('면 패턴 타일을 확대해 반복 밀도를 낮춥니다. 1배는 원본, 2배는 1:25,000 작업의 시작값입니다.')
+        load_layout.addRow('패턴 확대:', self.pattern_scale_spin)
+        pattern_btn = QPushButton('선택한 면 레이어에 패턴 확대 적용')
+        pattern_btn.clicked.connect(self.apply_selected_pattern_scale)
+        load_layout.addRow('', pattern_btn)
+        preview_btn = QPushButton('현재 스타일과 나란히 비교…')
+        preview_btn.clicked.connect(self.preview_selected_patterns)
+        load_layout.addRow('', preview_btn)
 
         self.load_btn = QPushButton("자동 로드 및 스타일 적용")
         self.load_btn.setToolTip(
@@ -349,7 +371,13 @@ class MainDialog(QDialog):
 
         layout.addLayout(bottom_layout)
 
-        self.setLayout(layout)
+        contents = QWidget()
+        contents.setLayout(layout)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(contents)
+        outer = QVBoxLayout(self)
+        outer.addWidget(scroll)
 
         # Auto-populate layer combo boxes on dialog open
         self.refresh_geochem_layer_combos()
@@ -366,10 +394,38 @@ class MainDialog(QDialog):
         """
         QMessageBox.information(self, "도움말", help_text)
 
+    def apply_selected_pattern_scale(self):
+        layers = self.iface.layerTreeView().selectedLayers() if self.iface else []
+        count = skipped = 0
+        for layer in layers:
+            if layer.type() == Qgis.LayerType.Vector and layer.geometryType() == Qgis.GeometryType.Polygon:
+                report = scale_patterns(layer, self.pattern_scale_spin.value())
+                count += bool(report['changed'])
+                skipped += report['skipped']
+        if not count:
+            self.log('변경할 래스터 면 패턴이 없습니다. 레이어 패널에서 패턴이 있는 면 레이어를 선택하세요.')
+        else:
+            self.log(f'면 패턴 확대: {count}개 레이어에 {self.pattern_scale_spin.value():g}배 적용')
+        if skipped:
+            self.log(f'데이터 정의 또는 이미지 크기 확인이 필요한 패턴 {skipped}개는 변경하지 않았습니다.')
+
+    def preview_selected_patterns(self):
+        layers = self.iface.layerTreeView().selectedLayers() if self.iface else []
+        polygons = [layer for layer in layers if layer.type() == Qgis.LayerType.Vector
+                    and layer.geometryType() == Qgis.GeometryType.Polygon]
+        if not polygons:
+            self.log('비교할 면 레이어를 레이어 패널에서 선택하세요.')
+            return
+        dialog = PatternPreviewDialog(self.iface.mapCanvas(), polygons, self.pattern_scale_spin.value(), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.pattern_scale_spin.setValue(dialog.selected_multiplier())
+            self.apply_selected_pattern_scale()
+        dialog.deleteLater()
+
     def log(self, message: str):
         """Write a message to the built-in log panel."""
         from qgis.PyQt.QtCore import QCoreApplication
-        self.log_text.append(message)
+        self.log_text.append(str(message).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
         self.log_text.verticalScrollBar().setValue(
             self.log_text.verticalScrollBar().maximum())
         QCoreApplication.processEvents()
@@ -391,11 +447,11 @@ class MainDialog(QDialog):
         layers = QgsProject.instance().mapLayers().values()
         for layer in layers:
             # WMS combo: raster layers only
-            if layer.type() == 1:  # RasterLayer
+            if layer.type() == Qgis.LayerType.Raster:  # RasterLayer
                 self.wms_layer_combo.addItem(layer.name(), layer.id())
 
             # Extent combo: VECTOR layers only
-            if layer.type() == 0:  # VectorLayer
+            if layer.type() == Qgis.LayerType.Vector:  # VectorLayer
                 self.extent_layer_combo.addItem(
                     f"[대상지] {layer.name()}", layer.id())
 
@@ -419,8 +475,8 @@ class MainDialog(QDialog):
         layers = QgsProject.instance().mapLayers().values()
         for layer in layers:
             # Include Vector (Litho) or Raster (converted results)
-            is_litho = LITHO_LAYER_KEYWORD in layer.name().lower() and layer.type() == 0
-            is_result = '(수치화)' in layer.name() and layer.type() == 1
+            is_litho = layer.type() == Qgis.LayerType.Vector and self._resolve_vector_export_field(layer) is not None
+            is_result = '(수치화)' in layer.name() and layer.type() == Qgis.LayerType.Raster
 
             if is_litho or is_result:
                 item = QListWidgetItem(layer.name())
@@ -471,7 +527,8 @@ class MainDialog(QDialog):
 
         if target_layer.isValid():
             canvas = self.iface.mapCanvas()
-            canvas.setExtent(target_layer.extent())
+            transform = QgsCoordinateTransform(target_layer.crs(), canvas.mapSettings().destinationCrs(), QgsProject.instance())
+            canvas.setExtent(transform.transformBoundingBox(target_layer.extent()))
             canvas.refresh()
 
     def load_selected_zips(self):
@@ -501,7 +558,8 @@ class MainDialog(QDialog):
         self.load_btn.setEnabled(False)
         self.browse_btn.setEnabled(False)
 
-        processor = ZipProcessor()
+        processor = ZipProcessor(log_callback=self.log)
+        warning_count = 0
         loaded_zip_count = 0
         total_layer_count = 0
         failed_paths = []
@@ -516,11 +574,18 @@ class MainDialog(QDialog):
                     continue
 
                 self.log(f"[{idx}/{len(zip_paths)}] Loading ZIP: {zip_path}")
-                loaded_layers = processor.process_zip(
-                    zip_path,
-                    font_family=self.font_combo.currentFont().family(),
-                    font_size=self.size_spin.value()
-                )
+                try:
+                    loaded_layers = processor.process_zip(
+                        zip_path,
+                        font_family=self.font_combo.currentFont().family(),
+                        font_size=self.size_spin.value(),
+                        encoding_override=self.encoding_combo.currentData(),
+                        pattern_scale=self.pattern_scale_spin.value()
+                    )
+                    warning_count += len(processor.last_report.get('warnings', []))
+                except Exception as exc:
+                    loaded_layers = []
+                    self.log(f'{zip_path}: {exc}')
 
                 if loaded_layers:
                     loaded_zip_count += 1
@@ -542,7 +607,11 @@ class MainDialog(QDialog):
                 msg = f"{loaded_zip_count}/{len(zip_paths)} ZIP loaded, total {total_layer_count} layers."
                 if failed_paths:
                     msg += f"\nFailed: {len(failed_paths)}"
-                QMessageBox.information(self, "Success", msg)
+                if warning_count:
+                    msg += f'\nWarnings: {warning_count}. 분석 로그에서 누락/스타일 오류를 확인하세요.'
+                    QMessageBox.warning(self, '일부 항목 확인 필요', msg)
+                else:
+                    QMessageBox.information(self, "Success", msg)
             else:
                 QMessageBox.warning(
                     self, "Warning", "No layers were loaded. Check the log panel for details.")
@@ -551,10 +620,10 @@ class MainDialog(QDialog):
             self.browse_btn.setEnabled(True)
 
     def _resolve_vector_export_field(self, layer):
-        fields = [f.name() for f in layer.fields()]
+        fields = {f.name().casefold(): f.name() for f in layer.fields()}
         for candidate in VECTOR_EXPORT_FIELD_CANDIDATES:
-            if candidate in fields:
-                return candidate
+            if candidate.casefold() in fields:
+                return fields[candidate.casefold()]
         return None
 
     def export_maxent_raster(self):
@@ -583,121 +652,69 @@ class MainDialog(QDialog):
         vector_layers = [
             selected_layer
             for selected_layer in selected_layers
-            if selected_layer.type() == 0
+            if selected_layer.type() == Qgis.LayerType.Vector
         ]
         raster_layers = [
             selected_layer
             for selected_layer in selected_layers
-            if selected_layer.type() == 1
+            if selected_layer.type() == Qgis.LayerType.Raster
         ]
 
         if not vector_layers and not raster_layers:
             QMessageBox.warning(self, "오류", "유효한 레이어가 선택되지 않았습니다.")
             return
 
-        # 3. Get Save Path
-        save_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "MaxEnt용 래스터 파일 저장",
-            "",
-            "GeoTIFF (*.tif);;ASCII Grids (*.asc)"
-        )
+        if (vector_layers and raster_layers) or len(raster_layers) > 1:
+            QMessageBox.warning(self, '선택 확인', '지질 벡터 여러 개 또는 수치 래스터 한 개를 선택하세요. 혼합 선택은 지원하지 않습니다.')
+            return
+        save_path, selected_filter = QFileDialog.getSaveFileName(
+            self, '분석용 래스터 저장', '', 'GeoTIFF (*.tif);;ASCII Grids (*.asc)')
         if not save_path:
             return
-
+        if not os.path.splitext(save_path)[1]:
+            save_path += '.asc' if '*.asc' in selected_filter else '.tif'
         resolution = self.res_spin.value()
-
+        self.export_btn.setEnabled(False)
         try:
-            target_layers = []
-
-            # A. Process Vector Layers (Merge if multiple, or use single)
-            if vector_layers:
-                if len(vector_layers) > 1:
-                    merge_params = {
-                        'LAYERS': vector_layers,
-                        'CRS': vector_layers[0].crs(),
-                        'OUTPUT': 'TEMPORARY_OUTPUT'
-                    }
-                    merged = processing.run(
-                        "native:mergevectorlayers", merge_params)['OUTPUT']
-                    export_field = self._resolve_vector_export_field(merged)
-                    if not export_field:
-                        raise ValueError(
-                            f"통합된 레이어에 사용 가능한 필드가 없습니다. 후보: {', '.join(VECTOR_EXPORT_FIELD_CANDIDATES)}")
-                    target_layers.append(('vector', merged, export_field))
+            with tempfile.TemporaryDirectory(prefix='KigamExport_') as temp_dir:
+                intermediate = os.path.join(temp_dir, 'result.tif')
+                codes = None
+                if vector_layers:
+                    prepared, codes, target_crs = raster_utils.categorical_layers(
+                        vector_layers, self._resolve_vector_export_field)
+                    merged = prepared[0] if len(prepared) == 1 else processing.run(
+                        'native:mergevectorlayers', {'LAYERS': prepared, 'CRS': target_crs,
+                                                     'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+                    extent, target_crs, _, _ = raster_utils.metric_grid(merged.extent(), target_crs, resolution)
+                    processing.run('gdal:rasterize', {
+                        'INPUT': merged, 'FIELD': 'KIGAM_ID', 'UNITS': 1,
+                        'WIDTH': resolution, 'HEIGHT': resolution, 'EXTENT': extent,
+                        'NODATA': NODATA_VALUE, 'INIT': NODATA_VALUE,
+                        'DATA_TYPE': 4, 'OUTPUT': intermediate})  # Int32 category IDs
                 else:
-                    export_field = self._resolve_vector_export_field(
-                        vector_layers[0])
-                    if not export_field:
-                        raise ValueError(
-                            f"'{vector_layers[0].name()}' 레이어에 사용 가능한 필드가 없습니다. 후보: {', '.join(VECTOR_EXPORT_FIELD_CANDIDATES)}")
-                    target_layers.append(
-                        ('vector', vector_layers[0], export_field))
-
-            # B. Process Raster Layers (GeoTIFF clipping/resampling to match if needed)
-            # For simplicity, we process each and the user might want them merged or separate.
-            # MaxEnt usually wants separate files in a folder or stacked.
-            # Here we follow the previous 'single output' pattern for geological maps.
-            # If user selected both, we might need to handle it.
-            # RATIONAL: If user selected MULTIPLE types, we should probably warn or handle merging.
-            # But the user said "변수로 생성", usually they are separate files.
-
-            # Implementation choice: if it's a single vector merge, we rasterize.
-            # if they selected rasters, we just export them (maybe resampled).
-
-            # Let's handle the VECTORS first as a single output.
-            if target_layers and target_layers[0][0] == 'vector':
-                v_layer = target_layers[0][1]
-                export_field = target_layers[0][2]
-                params = {
-                    'INPUT': v_layer,
-                    'FIELD': export_field,
-                    'UNITS': MAXENT_RASTERIZE_UNITS,
-                    'WIDTH': resolution,
-                    'HEIGHT': resolution,
-                    'EXTENT': v_layer.extent(),
-                    'NODATA': NODATA_VALUE,
-                    'DATA_TYPE': GDAL_DATA_TYPE,  # Float32 by default
-                    'OUTPUT': save_path
-                }
-                processing.run("gdal:rasterize", params)
-                QMessageBox.information(
-                    self, "성공", f"래스터 변환이 완료되었습니다:\n{save_path}")
-                return
-
-            # C. If they selected Rasters
-            if raster_layers:
-                if len(raster_layers) > 1:
-                    self.log(
-                        f"[INFO] 래스터 {len(raster_layers)}개 선택됨. 첫 번째 레이어만 내보냅니다: {raster_layers[0].name()}")
-
-                r_layer = raster_layers[0]
-
-                extent = r_layer.extent()
-                extent_str = f"{extent.xMinimum()},{extent.xMaximum()},{extent.yMinimum()},{extent.yMaximum()}"
-                target_crs = r_layer.crs().authid() if r_layer.crs(
-                ) and r_layer.crs().isValid() else None
-                warp_params = {
-                    'INPUT': r_layer,
-                    'SOURCE_CRS': None,
-                    'TARGET_CRS': target_crs,
-                    'RESAMPLING': MAXENT_RESAMPLING,
-                    'NODATA': NODATA_VALUE,
-                    'TARGET_RESOLUTION': resolution,
-                    'OPTIONS': '',
-                    'DATA_TYPE': GDAL_DATA_TYPE,
-                    'TARGET_EXTENT': extent_str,
-                    'TARGET_EXTENT_CRS': target_crs,
-                    'MULTITHREADING': MAXENT_MULTITHREADING,
-                    'EXTRA': '',
-                    'OUTPUT': save_path
-                }
-                processing.run("gdal:warpreproject", warp_params)
-                QMessageBox.information(
-                    self, "성공", f"래스터 내보내기가 완료되었습니다:\n{save_path}")
-
-        except Exception as e:
-            QMessageBox.critical(self, "오류", f"내보내기 중 오류가 발생했습니다:\n{str(e)}")
+                    raster = raster_layers[0]
+                    extent, target_crs, _, _ = raster_utils.metric_grid(raster.extent(), raster.crs(), resolution)
+                    processing.run('gdal:warpreproject', {
+                        'INPUT': raster, 'SOURCE_CRS': None, 'TARGET_CRS': target_crs,
+                        'RESAMPLING': MAXENT_RESAMPLING, 'NODATA': NODATA_VALUE,
+                        'TARGET_RESOLUTION': resolution, 'OPTIONS': '', 'DATA_TYPE': GDAL_DATA_TYPE,
+                        'TARGET_EXTENT': extent, 'TARGET_EXTENT_CRS': target_crs,
+                        'MULTITHREADING': MAXENT_MULTITHREADING, 'EXTRA': '', 'OUTPUT': intermediate})
+                # AAIGrid supports CreateCopy, not rasterize's direct Create path.
+                output = gdal.Translate(save_path, intermediate,
+                                        format='AAIGrid' if save_path.lower().endswith('.asc') else 'GTiff')
+                if output is None:
+                    raise RuntimeError('GDAL output creation failed')
+                output = None
+                if codes is not None:
+                    codebook = raster_utils.write_codebook(save_path, codes)
+                    self.log(f'지질 분류 ID 대응표: {codebook}')
+                self.log(f'내보내기 CRS: {target_crs.authid()}, 해상도: {resolution} m')
+            QMessageBox.information(self, '성공', f'래스터 내보내기 완료: {save_path}')
+        except Exception as exc:
+            QMessageBox.critical(self, '오류', f'내보내기 중 오류: {exc}')
+        finally:
+            self.export_btn.setEnabled(True)
 
     def run_geochem_analysis(self):
         """
@@ -711,7 +728,7 @@ class MainDialog(QDialog):
             return
 
         layer = QgsProject.instance().mapLayer(wms_layer_id)
-        if not layer or layer.type() != 1:  # RasterLayer
+        if not layer or layer.type() != Qgis.LayerType.Raster:  # RasterLayer
             QMessageBox.warning(
                 self, "오류", "선택한 레이어가 유효하지 않습니다. 래스터 레이어를 선택해주세요.")
             return
@@ -740,58 +757,26 @@ class MainDialog(QDialog):
 
         # 4. Processing
         tmp_dir = tempfile.mkdtemp(prefix="KigamGeo_")
+        progress = ds = out_ds = None
+        self.geochem_btn.setEnabled(False)
         try:
             run_id = uuid.uuid4().hex[:6]
             rgb_path = os.path.join(tmp_dir, f"rgb_{run_id}.tif")
 
-            # Use current canvas extent and resolution
             canvas = self.iface.mapCanvas()
-
-            # DEFAULT: Canvas Extent and Size
             extent = canvas.extent()
-            width = canvas.size().width()
-            height = canvas.size().height()
-
-            # IF Layer Selected: Use Layer Extent and Calculated Size
-            target_res = self.geochem_res_spin.value()
-            selected_extent_data = self.extent_layer_combo.currentData()
-            selected_extent_layer = None
-
-            if isinstance(selected_extent_data, str):
-                selected_extent_layer = QgsProject.instance().mapLayer(selected_extent_data)
-            elif selected_extent_data is not None and hasattr(selected_extent_data, "id"):
-                # Backward compatibility for old combo values stored as layer objects.
-                selected_extent_layer = selected_extent_data
-
-            if selected_extent_layer:
-
-                full_extent = selected_extent_layer.extent()
-                # Transform to project CRS before export requests.
-                tr = QgsCoordinateTransform(selected_extent_layer.crs(
-                ), QgsProject.instance().crs(), QgsProject.instance())
-                extent = tr.transformBoundingBox(full_extent)
-
-                # Calculate W/H based on resolution
-                width = int(extent.width() / target_res)
-                height = int(extent.height() / target_res)
-
-                # Sanity check
-                if width <= 0 or height <= 0:
-                    raise ValueError("계산된 이미지 크기가 너무 작습니다. 해상도를 확인하세요.")
-
-                self.log(f"분석 범위 (대상지): {selected_extent_layer.name()}")
-            elif selected_extent_data is not None:
-                self.log("[WARNING] 선택된 대상지 레이어를 찾을 수 없습니다. 전체 화면 범위로 진행합니다.")
-            else:
-                # If using Canvas Extent but want specific resolution?
-                # User might zoom in and out. The original logic used canvas pixels (screenshot-like).
-                # If user wants specific resolution on canvas extent:
-                width = int(extent.width() / target_res)
-                height = int(extent.height() / target_res)
-
-            # Step A: Export current view to GeoTIFF
-            if not geochem_utils.export_geotiff(layer, rgb_path, extent, width, height):
-                raise RuntimeError("WMS 레이어 내보내기에 실패했습니다.")
+            source_crs = canvas.mapSettings().destinationCrs()
+            selected_id = self.extent_layer_combo.currentData()
+            if selected_id is not None:
+                selected = QgsProject.instance().mapLayer(selected_id)
+                if selected is None:
+                    raise ValueError('선택한 대상지 레이어가 삭제되었습니다. 목록을 새로고침하세요.')
+                extent, source_crs = selected.extent(), selected.crs()
+            extent, target_crs, width, height = raster_utils.metric_grid(
+                extent, source_crs, self.geochem_res_spin.value())
+            self.log(f'출력: {target_crs.authid()}, {width} × {height}, {self.geochem_res_spin.value()} m')
+            if not geochem_utils.export_geotiff(layer, rgb_path, extent, width, height, target_crs):
+                raise RuntimeError('WMS 레이어 내보내기에 실패했습니다.')
 
             # Step B: Read and Process with Progress Dialog
             from qgis.PyQt.QtWidgets import QProgressDialog
@@ -806,6 +791,9 @@ class MainDialog(QDialog):
             QCoreApplication.processEvents()
 
             ds = gdal.Open(rgb_path)
+            if ds is None:
+                raise RuntimeError('내보낸 RGB 래스터를 열 수 없습니다.')
+            width, height = ds.RasterXSize, ds.RasterYSize
             band_count = ds.RasterCount
             if band_count < 3:
                 raise RuntimeError("RGB 래스터는 최소 3밴드(R,G,B)가 필요합니다.")
@@ -820,6 +808,8 @@ class MainDialog(QDialog):
                     alpha = None
             gt = ds.GetGeoTransform()
             proj = ds.GetProjection()
+            source_mask = ds.GetRasterBand(1).GetMaskBand().ReadAsArray() == 0
+            ds = None
 
             progress.setValue(30)
             progress.setLabelText("RGB → 수치 변환 중...")
@@ -835,6 +825,9 @@ class MainDialog(QDialog):
                 snap_last_t=None,  # No snap
             )
             nodata_val = np.float32(NODATA_VALUE)
+            val_arr[source_mask] = nodata_val
+            background = ((r == 204) & (g == 204) & (b == 204)) | ((r == 255) & (g == 255) & (b == 255))
+            val_arr[background] = nodata_val
 
             progress.setValue(60)
             progress.setLabelText("NoData 처리 중...")
@@ -869,17 +862,20 @@ class MainDialog(QDialog):
 
             # Step C: Inpainting (Black lines)
             mask = geochem_utils.mask_black_lines(r, g, b)
-            val_arr[mask] = nodata_val
-            val_arr = geochem_utils.gdal_fill_nodata(
-                val_arr, nodata_val, GEOCHEM_FILL_NODATA_DISTANCE)
+            val_arr = geochem_utils.fill_linework(
+                val_arr, mask, nodata_val, GEOCHEM_FILL_NODATA_DISTANCE)
 
             progress.setValue(85)
             progress.setLabelText("파일 저장 중...")
             QCoreApplication.processEvents()
 
+            if progress.wasCanceled():
+                raise RuntimeError('사용자가 취소했습니다.')
             # Step D: Save output
             out_ds = gdal.GetDriverByName("GTiff").Create(
                 save_path, width, height, 1, gdal.GDT_Float32)
+            if out_ds is None:
+                raise RuntimeError('출력 파일을 만들 수 없습니다.')
             out_ds.SetGeoTransform(gt)
             out_ds.SetProjection(proj)
             out_band = out_ds.GetRasterBand(1)
@@ -899,7 +895,7 @@ class MainDialog(QDialog):
                 # Apply legend-based pseudo-color styling (ArchToolkit method)
                 shader = QgsRasterShader()
                 ramp = QgsColorRampShader()
-                ramp.setColorRampType(QgsColorRampShader.Type.Interpolated)
+                ramp.setColorRampType(Qgis.ShaderInterpolationMethod.Linear)
                 items = []
                 for p in preset.points:
                     item = None
@@ -944,6 +940,10 @@ class MainDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "오류", f"분석 중 오류 발생: {str(e)}")
         finally:
+            ds = out_ds = None
+            if progress is not None:
+                progress.close()
+            self.geochem_btn.setEnabled(True)
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def get_settings(self):
