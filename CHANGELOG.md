@@ -24,6 +24,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Isolate corrupt nested ZIPs, support dot-prefixed ZIP paths and tolerate damaged optional Unicode filename metadata.
 - Preserve valid QML categories/symbols when some PNGs are missing; resolve local relative image paths outside `sym/`; surface missing-symbol warnings in the dialog.
 - Runtime regression suite, QGIS 3.40 / Qt6 CI configuration, release builder and validation checklist.
+- Validated source and installable ZIP with 35 tests each on Linux QGIS 3.40.15 and QGIS 4.2.2/Qt6, in addition to Windows QGIS 3.40.5.
 
 ### Changed
 - Minimum QGIS is now 3.40; maximum metadata version is 4.99. Qt imports and moved QGIS enums use current APIs. See RELEASE_CHECKLIST.md for tested runtimes and remaining compatibility limits.

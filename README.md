@@ -18,7 +18,7 @@
 | 최소 QGIS | `3.40` |
 | 플러그인 ID | `KigamGeoDownloader` |
 | 라이선스 | `GPL-2.0` |
-| Qt 호환성 | Qt5 / Qt6 (지원 목표 3.40 ~ 4.99, 실제 검증: 3.40.5) |
+| Qt 호환성 | Qt5 / Qt6 (허용 범위 3.40 ~ 4.99, 검증: Windows 3.40.5 / Linux 3.40.15·4.2.2) |
 
 ---
 
@@ -204,7 +204,7 @@ python tools/build_release.py
 ---
 
 검증 범위와 배포 전 남은 항목은 [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)를 참고하세요.
-QGIS 4 런타임 회귀 테스트를 위한 GitHub Actions 구성을 포함합니다. 4.99는 메타데이터의 허용 상한이며, 향후 모든 4.x 버전의 실행을 보증하는 값은 아닙니다.
+GitHub Actions에서 QGIS 3.40.15와 QGIS 4.2.2/Qt6의 소스·설치 ZIP 각각 35개 회귀 테스트를 통과했습니다. Windows QGIS 3.40.5도 검증했습니다. 4.99는 메타데이터의 허용 상한이며, 향후 모든 4.x 버전의 실행을 보증하는 값은 아닙니다.
 
 ## 🔗 링크
 

@@ -2,9 +2,10 @@
 
 Release date: 2026-09-28. Changes are based on main commit `51679ea`.
 
-## Verified locally
+## Verified locally and in CI
 
 - [x] QGIS 3.40.5 / Qt5 / Python 3.12 on Windows: regression suite passes.
+- [x] Linux CI: QGIS 3.40.15 / Qt5 and QGIS 4.2.2 / Qt6 each pass all 35 tests against both the source tree and the installable ZIP.
 - [x] Actual GDAL-created CP949, UTF-8 and EUC-KR Shapefiles; missing/incorrect CPG and manual override.
 - [x] Korean legacy ZIP names, nested ZIPs, independent failure reporting and local sheet symbols.
 - [x] QGIS-generated QML, modern Option paths, old prop paths, QML without symbols and XML entity rejection.
@@ -17,7 +18,7 @@ Release date: 2026-09-28. Changes are based on main commit `51679ea`.
 
 ## Validation status and remaining follow-ups
 
-- [ ] Run the included tests and plugin install/open/export flows on QGIS 4 / Qt6. No QGIS 4 runtime or Docker was available locally; the CI workflow has been prepared but has not run.
+- [x] Run the included QGIS 4 / Qt6 tests in CI, including dialog construction, preview isolation and raster export actions.
 - [ ] Recheck with the user's original KIGAM ZIP or several representative current portal downloads. The incident ZIP was unavailable; fixtures reproduce the defects, but do not establish coverage of every KIGAM package.
 - [ ] Visually compare pattern multipliers 1, 1.5, 2 and 3 on the user's map at 1:25,000, including the final print layout. Default 2 is a starting point, not a universal cartographic standard.
 - [ ] Confirm the source geological field has consistent meaning across sheets and inspect `.categories.csv`. Mark IDs as categorical in MaxEnt.
@@ -42,4 +43,4 @@ Release date: 2026-09-28. Changes are based on main commit `51679ea`.
 
 ## Follow-up validation
 
-The improved candidate adds 15 targeted tests (35 total). The comparison and preview images use synthetic polygons and textures rendered by QGIS at 1:25,000. They are not the user's original map. The QGIS 4 CI job now checks the actual major version, runs the installed ZIP's code and fails if the migration tool changes Python files; the remote job remains unexecuted locally.
+The release includes 35 regression tests. The comparison and preview images use synthetic polygons and textures rendered by QGIS at 1:25,000. They are not the user's original map. The QGIS 4 CI job checks the actual major version, runs the installed ZIP's code and fails if the migration tool changes Python files. Test fixtures also work with PYTHONOPTIMIZE=2, used by the Qt6 image. No original incident ZIP or manual QGIS 4 plugin-manager installation was available for validation.
