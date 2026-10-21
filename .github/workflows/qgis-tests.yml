@@ -29,7 +29,8 @@ jobs:
       - name: Validate the installable ZIP
         run: |
           /usr/bin/python3 tools/build_release.py --output-dir /tmp/kigam-package
-          /usr/bin/python3 -m zipfile -e /tmp/kigam-package/KIGAM_for_Archaeology_v0.1.4.zip /tmp/kigam-installed
+          PACKAGE=$(ls /tmp/kigam-package/KIGAM_for_Archaeology_v*.zip | head -n 1)
+          /usr/bin/python3 -m zipfile -e "$PACKAGE" /tmp/kigam-installed
           KIGAM_PLUGIN_ROOT=/tmp/kigam-installed/KigamGeoDownloader /usr/bin/python3 tests/run_tests.py
       - name: Check Qt6 migration (QGIS 4 image)
         if: contains(matrix.name, 'Qt6')
