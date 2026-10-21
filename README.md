@@ -4,7 +4,7 @@
 > 고고학적 유적 입지 분석·MaxEnt 종분포 모델링·지화학 이상대 탐지 등의 작업 흐름을 지원합니다.
 
 [![QGIS Plugin Repository](https://img.shields.io/badge/QGIS_Plugin_Repository-4701-green?logo=qgis)](https://plugins.qgis.org/plugins/KigamGeoDownloader/)
-[![Version](https://img.shields.io/badge/version-0.1.4-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.1.5-blue)](CHANGELOG.md)
 [![License: GPL v2](https://img.shields.io/badge/License-GPL_v2-blue.svg)](LICENSE)
 [![Star this repository](https://img.shields.io/github/stars/lzpxilfe/KIGAM-for-Archaeology?style=social)](https://github.com/lzpxilfe/KIGAM-for-Archaeology)
 
@@ -14,7 +14,7 @@
 
 | 항목 | 내용 |
 |---|---|
-| 버전 | `0.1.4` |
+| 버전 | `0.1.5` |
 | 최소 QGIS | `3.40` |
 | 플러그인 ID | `KigamGeoDownloader` |
 | 라이선스 | `GPL-2.0` |

@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use this repository in research, teaching, or applied work, please cite it using the metadata below."
 type: software
-version: 0.1.4
-date-released: 2026-09-28
+version: 0.1.5
+date-released: 2026-10-21
 title: "KIGAM-for-Archaeology: 한국지질자원연구원 데이터의 고고학적 활용"
 authors:
   - family-names: Hwang

@@ -6,6 +6,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.1.5] – 2026-10-21
+
+### Fixed
+- **ZIP extraction UnicodeEncodeError on Windows / Python 3.12+**:
+  When extracting ZIP archives where Info-ZIP Unicode Path extra field (`0x7075`) is present, Python's `zipfile` module pre-decodes Korean member names (e.g. `GF02_Geology_50K_공주.qgz`, `sym/광산.png`) into unicode strings. Attempting to encode these names with `cp437` previously threw `UnicodeEncodeError: 'charmap' codec can't encode characters in position ...` and caused extraction of the entire archive to abort. Added exception handling in `member_name` to retain already-decoded unicode filenames.
+- Validated loading with actual KIGAM 1:50,000 sheet package (`수치지질도_5만축척_GF02_공주.zip`).
+
+---
+
 ## [0.1.4] – 2026-09-28
 
 ### Fixed
@@ -95,6 +104,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - Proof-of-concept ZIP extraction and Shapefile loading implemented.
 - Basic symbol-based categorised renderer applied from `sym/` PNGs.
 
+[0.1.5]: https://github.com/lzpxilfe/KIGAM-for-Archaeology/releases/tag/v0.1.5
 [0.1.4]: https://github.com/lzpxilfe/KIGAM-for-Archaeology/releases/tag/v0.1.4
 [0.1.3]: https://github.com/lzpxilfe/KIGAM-for-Archaeology/commit/51679ea
 [0.1.2]: https://github.com/lzpxilfe/KIGAM-for-Archaeology/compare/v0.1.1...v0.1.2

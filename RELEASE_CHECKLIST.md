@@ -1,3 +1,15 @@
+# 0.1.5 release validation
+
+Release date: 2026-10-21. Changes are based on main commit `3877927`.
+
+## Verified locally
+- [x] QGIS 3.40.5 / Qt5 / Python 3.12 on Windows: regression suite (36 tests) passes.
+- [x] Actual user KIGAM ZIP (`수치지질도_5만축척_GF02_공주.zip`): all 10 Shapefiles loaded with QML styles and symbol path relinking without `charmap` encode errors.
+- [x] Pre-decoded unicode filename handling without UTF-8 flag (0x7075 Info-ZIP extra field) test added and verified.
+- [x] Version and release date recorded in `metadata.txt`, `CHANGELOG.md`, `CITATION.cff`, `README.md`.
+
+---
+
 # 0.1.4 release validation
 
 Release date: 2026-09-28. Changes are based on main commit `51679ea`.

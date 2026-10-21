@@ -244,3 +244,9 @@ class ImprovementsTests(unittest.TestCase):
         payload = b'\x01' + struct.pack('<I', zlib.crc32(b'test.txt')) + b'\xff'
         info.extra = struct.pack('<HH', 0x7075, len(payload)) + payload
         self.assertEqual(member_name(info), 'test.txt')
+
+    def test_pre_decoded_unicode_filename_without_utf8_flag(self):
+        info = zipfile.ZipInfo('GF02_Geology_50K_공주.qgz')
+        info.flag_bits = 0
+        self.assertEqual(member_name(info), 'GF02_Geology_50K_공주.qgz')
+

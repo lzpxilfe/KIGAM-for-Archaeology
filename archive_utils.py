@@ -18,7 +18,10 @@ class ExtractionLimitError(ValueError):
 def member_name(info):
     if info.flag_bits & 0x800:
         return unicodedata.normalize('NFC', info.filename)
-    raw = info.filename.encode('cp437')
+    try:
+        raw = info.filename.encode('cp437')
+    except UnicodeEncodeError:
+        return unicodedata.normalize('NFC', info.filename)
     # Info-ZIP Unicode Path extra field takes precedence if its CRC matches.
     extra = info.extra
     while len(extra) >= 4:
