@@ -14,6 +14,7 @@ from .plugin_config import PLUGIN_CONFIG, DEFAULT_PLUGIN_CONFIG
 from qgis.core import (
     QgsProject,
     QgsApplication,
+    QgsMapLayer,
     QgsVectorLayer,
     QgsRasterMarkerSymbolLayer,
     QgsRasterFillSymbolLayer,
@@ -103,8 +104,7 @@ class ZipProcessor:
         ).strip() or "KIGAM_Extract"
         self.extract_root = extract_root or os.path.join(
             QgsApplication.qgisSettingsDirPath(), os.path.basename(extract_root_name))
-        if not os.path.exists(self.extract_root):
-            os.makedirs(self.extract_root)
+        os.makedirs(self.extract_root, exist_ok=True)
 
     def _log(self, message, warning=False):
         QgsMessageLog.logMessage(message, 'KIGAM Plugin',
@@ -409,6 +409,7 @@ class ZipProcessor:
             self._log(f'QML parse failed: {qml_path}: {exc}', True)
             return None, 0, 0
 
+        boundary = Path(self.last_report.get('extract_dir', Path(qml_path).parent)).resolve()
         total_image_props = 0
         relinked_count = 0
         for prop, value_key in self._image_properties(root):
@@ -419,13 +420,16 @@ class ZipProcessor:
             if not image_stem:
                 continue
 
-            png_path = self._resolve_symbol_path(
-                image_stem, raw_sym_files, normalized_sym_files)
+            png_path = None
+            if not ntpath.isabs(image_value) or Path(image_value).is_absolute():
+                candidate = Path(os.path.abspath(Path(qml_path).parent / image_value))
+                if candidate.is_relative_to(boundary):
+                    candidate = candidate.resolve()
+                    if candidate.is_relative_to(boundary) and candidate.is_file():
+                        png_path = str(candidate)
             if not png_path:
-                candidate = (Path(image_value) if ntpath.isabs(image_value) else Path(qml_path).parent / image_value).resolve()
-                boundary = Path(self.last_report.get('extract_dir', Path(qml_path).parent)).resolve()
-                if candidate.is_relative_to(boundary) and candidate.is_file():
-                    png_path = str(candidate)
+                png_path = self._resolve_symbol_path(
+                    image_stem, raw_sym_files, normalized_sym_files)
             if not png_path:
                 # Never leave an obsolete absolute/remote path for QGIS to load.
                 # Only this symbol layer will be replaced after style loading.
@@ -441,12 +445,10 @@ class ZipProcessor:
         if relinked_count != total_image_props:
             self._log(f'QML images unresolved: {qml_path} ({relinked_count}/{total_image_props}); replacing missing images only', True)
 
-        relinked_qml = os.path.join(
-            os.path.dirname(qml_path),
-            f"{os.path.splitext(os.path.basename(qml_path))[0]}_kigam_relinked.qml"
-        )
-        tree.write(relinked_qml, encoding=QML_WRITE_ENCODING,
-                   xml_declaration=True)
+        with tempfile.NamedTemporaryFile(mode='wb', prefix='.kigam-style-', suffix='.qml',
+                                         dir=Path(qml_path).parent, delete=False) as fp:
+            relinked_qml = fp.name
+            tree.write(fp, encoding=QML_WRITE_ENCODING, xml_declaration=True)
         return relinked_qml, relinked_count, total_image_props
 
     def _repair_missing_images(self, layer):
@@ -481,7 +483,9 @@ class ZipProcessor:
             return False
 
         try:
-            result = layer.loadNamedStyle(style_path)
+            # A sidecar is input data. Do not import its forms or layer actions.
+            categories = QgsMapLayer.StyleCategory.Symbology | QgsMapLayer.StyleCategory.Labeling
+            result = layer.loadNamedStyle(style_path, categories=categories)
         except Exception:
             return False
 
@@ -528,17 +532,29 @@ class ZipProcessor:
         extract_dir = tempfile.mkdtemp(prefix=f"{safe_prefix}_", dir=self.extract_root)
         self.last_report = {'archive': str(zip_path), 'extract_dir': extract_dir,
                             'discovered': 0, 'loaded': 0, 'failed': [], 'warnings': []}
+        loaded_layers = []
         try:
-            archive_report = extract_archive(zip_path, extract_dir)
+            try:
+                archive_report = extract_archive(zip_path, extract_dir)
+            except Exception as exc:
+                self._log(f'ZIP extraction failed: {exc}', True)
+                return loaded_layers
             for warning in archive_report['warnings']:
                 self._log(warning, True)
-        except Exception as exc:
-            self._log(f'ZIP extraction failed: {exc}', True)
-            owned_dir, parent = Path(extract_dir).resolve(), Path(self.extract_root).resolve()
-            if owned_dir != parent and owned_dir.is_relative_to(parent):
-                shutil.rmtree(owned_dir)
-            return []
+            self._load_extracted_layers(extract_dir, zip_basename, loaded_layers, font_family,
+                                        font_size, encoding_override, pattern_scale)
+            return loaded_layers
+        finally:
+            if not loaded_layers:
+                owned_dir, parent = Path(extract_dir).resolve(), Path(self.extract_root).resolve()
+                if owned_dir != parent and owned_dir.is_relative_to(parent):
+                    try:
+                        shutil.rmtree(owned_dir)
+                    except OSError as exc:
+                        self._log(f'ZIP extraction cleanup failed: {exc}', True)
 
+    def _load_extracted_layers(self, extract_dir, zip_basename, loaded_layers, font_family,
+                               font_size, encoding_override, pattern_scale):
         paths = sorted(p for p in Path(extract_dir).rglob('*')
                        if p.is_file() and p.suffix.lower() == '.shp')
         self.last_report['discovered'] = len(paths)
@@ -548,9 +564,10 @@ class ZipProcessor:
             self._log('Unsupported ZIP datasets (SHP loader): ' + ', '.join(sorted(unsupported)[:20]), True)
         if not paths:
             self._log('No Shapefiles found. This loader supports SHP ZIP packages, including nested ZIPs.', True)
-            return []
-        tree_root = QgsProject.instance().layerTreeRoot()
-        loaded_layers, target_group = [], None
+            return
+        project = QgsProject.instance()
+        tree_root = project.layerTreeRoot()
+        target_group = None
         for shp in paths:
             try:
                 if sidecar(shp, '.shx') is None:
@@ -561,11 +578,12 @@ class ZipProcessor:
                     str(shp), shp.stem, sym_path, str(qml) if qml else None, encoding_override)
                 if layer is None or not layer.isValid():
                     raise ValueError('OGR could not open the Shapefile')
+                if project.addMapLayer(layer, False) is None:
+                    raise RuntimeError('QGIS could not register the Shapefile')
+                loaded_layers.append(layer)
                 if target_group is None:
                     target_group = tree_root.addGroup(self._build_unique_group_name(tree_root, zip_basename))
-                QgsProject.instance().addMapLayer(layer, False)
                 target_group.addLayer(layer)
-                loaded_layers.append(layer)
             except Exception as exc:
                 self.last_report['failed'].append(str(shp.relative_to(extract_dir)))
                 self._log(f'{shp.name}: load failed: {exc}', True)
@@ -585,7 +603,6 @@ class ZipProcessor:
         self.last_report['loaded'] = len(loaded_layers)
         self._log(f'{zip_basename}: {len(loaded_layers)}/{len(paths)} SHP loaded; '
                   f'{len(self.last_report["failed"])} failed')
-        return loaded_layers
 
     @staticmethod
     def apply_pattern_scale(layer, multiplier):

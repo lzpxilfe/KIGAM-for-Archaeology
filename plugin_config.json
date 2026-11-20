@@ -37,8 +37,6 @@
   "raster": {
     "vector_export_field_candidates": ["LITHOIDX", "LITHONAME", "TYPE", "CODE", "ASGN_CODE", "SIGN"],
     "nodata": -9999.0,
-    "gdal_data_type": 5,
-    "maxent_rasterize_units": 1,
     "maxent_resampling": 0,
     "geochem_fill_nodata_distance": 30,
     "multithreading": false

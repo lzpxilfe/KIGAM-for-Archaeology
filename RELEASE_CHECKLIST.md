@@ -1,3 +1,13 @@
+# 0.1.6 release validation
+
+- [x] Run all 52 regression tests on Windows with QGIS 3.40.3 / Qt 5 and QGIS 4.2.3 / Qt 6, against both the source tree and the extracted installation ZIP.
+- [x] Compare Float32 GeoTIFF and ASCII Grid cell values, verify exact shared grids, and exercise independent codebooks and rollback after a failed file replacement.
+- [x] Exercise the QGIS WMS provider with a local WMS fixture and verify RGB export, transparency, off-legend colors, the lowest valid interval, and optional linework filling.
+- [x] Verify QML symbology import without form or action settings, image path precedence, and cleanup after ZIP imports that register no layers.
+- [ ] Check the preset palettes against the current KIGAM WMS and repeat the workflow with a current portal download.
+
+---
+
 # 0.1.5 release validation
 
 Release date: 2026-10-21. Changes are based on main commit `3877927`.

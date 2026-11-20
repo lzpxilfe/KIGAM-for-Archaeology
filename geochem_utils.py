@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from osgeo import gdal
 from qgis.core import (
+    Qgis,
     QgsRasterLayer,
     QgsRectangle,
     QgsProject,
@@ -20,6 +21,8 @@ from qgis.core import (
     QgsRasterFileWriter,
     QgsRasterProjector,
 )
+from .raster_output import check_grid, close_dataset
+from .raster_utils import open_file_raster
 
 
 @dataclass(frozen=True)
@@ -152,11 +155,9 @@ PRESETS: Dict[str, GeoChemPreset] = {
 }
 
 
-def _points_to_breaks(points: Sequence[LegendPoint]) -> List[float]:
-    """Extract break values from legend points."""
-    vals = [float(p.value) for p in points]
-    vals = sorted(set(vals))
-    return vals
+RGB_MATCH_TOLERANCE = 48.0
+MIN_OPAQUE_ALPHA = 250
+ABSENT_STOP = LegendPoint(0.0, (204, 204, 204))
 
 
 def interp_rgb_to_value(
@@ -165,11 +166,11 @@ def interp_rgb_to_value(
     g: np.ndarray,
     b: np.ndarray,
     points: Sequence[LegendPoint],
-    snap_last_t: Optional[float] = None,
+    max_distance: Optional[float] = None,
 ) -> np.ndarray:
     """Vectorized mapping: RGB -> scalar value by projecting to the nearest legend polyline segment in RGB space.
 
-    EXACT COPY from ArchToolkit (lzpxilfe/ar) geochem_polygonize_dialog.py lines 251-321
+    Adapted from ArchToolkit's geochem_legend.py.
     """
     if r.shape != g.shape or r.shape != b.shape:
         raise ValueError("RGB bands must have the same shape")
@@ -183,37 +184,22 @@ def interp_rgb_to_value(
     out = np.full(rr.shape, np.nan, dtype=np.float32)
     min_dist = np.full(rr.shape, np.float32(np.inf), dtype=np.float32)
 
-    pts = list(points)
-    last_seg_idx = len(pts) - 2
-    snap_last = None
-    if snap_last_t is not None:
-        try:
-            snap_last = float(snap_last_t)
-        except Exception:
-            snap_last = None
-    if snap_last is not None and not (0.0 <= snap_last <= 1.0):
-        snap_last = None
-
-    for i in range(len(pts) - 1):
-        v1 = float(pts[i].value)
-        v2 = float(pts[i + 1].value)
-        c1 = pts[i].rgb
-        c2 = pts[i + 1].rgb
-
-        c1r = np.float32(c1[0])
-        c1g = np.float32(c1[1])
-        c1b = np.float32(c1[2])
-        vr = np.float32(c2[0] - c1[0])
-        vg = np.float32(c2[1] - c1[1])
-        vb = np.float32(c2[2] - c1[2])
+    for start, end in zip(points, points[1:]):
+        c1r, c1g, c1b = map(np.float32, start.rgb)
+        if start == ABSENT_STOP:
+            # The grey swatch is a discrete background color.
+            dist_sq = (rr - c1r) ** 2 + (gg - c1g) ** 2 + (bb - c1b) ** 2
+            mask = dist_sq < min_dist
+            out[mask] = ABSENT_STOP.value
+            min_dist[mask] = dist_sq[mask]
+            continue
+        vr, vg, vb = [np.float32(right - left) for left, right in zip(start.rgb, end.rgb)]
         v_len_sq = np.float32(vr * vr + vg * vg + vb * vb)
         if v_len_sq <= 0:
             continue
 
         t = ((rr - c1r) * vr + (gg - c1g) * vg + (bb - c1b) * vb) / v_len_sq
         np.clip(t, np.float32(0.0), np.float32(1.0), out=t)
-        if snap_last is not None and i == last_seg_idx:
-            t[t > np.float32(snap_last)] = np.float32(1.0)
         pr = c1r + t * vr
         pg = c1g + t * vg
         pb = c1b + t * vb
@@ -223,63 +209,168 @@ def interp_rgb_to_value(
         if not np.any(mask):
             continue
 
-        base = np.float32(v1)
-        delta = np.float32(v2 - v1)
+        base = np.float32(start.value)
+        delta = np.float32(end.value - start.value)
         out[mask] = base + t[mask].astype(np.float32, copy=False) * delta
         min_dist[mask] = dist_sq[mask].astype(np.float32, copy=False)
 
+    if max_distance is not None:
+        out[min_dist > max_distance ** 2] = np.nan
     return out
 
 
 def mask_black_lines(r: np.ndarray, g: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Detect neutral dark 'linework' (not intense red/brown) and return mask.
-
-    EXACT COPY from ArchToolkit (lzpxilfe/ar) geochem_polygonize_dialog.py lines 324-335
-    """
-    rr = r.astype(np.int16, copy=False)
-    gg = g.astype(np.int16, copy=False)
-    bb = b.astype(np.int16, copy=False)
-    return np.logical_and.reduce(
-        (
-            rr < 75,
-            gg < 75,
-            bb < 75,
-            np.abs(rr - gg) < 15,
-            np.abs(gg - bb) < 15,
-        )
-    )
+    maximum = np.maximum(np.maximum(r, g), b)
+    minimum = np.minimum(np.minimum(r, g), b)
+    return (maximum < 90) & (maximum - minimum < 30)
 
 
-def gdal_fill_nodata(arr: np.ndarray, nodata: float, max_dist_px: int) -> np.ndarray:
-    """Fill nodata using GDAL FillNodata.
+_NEIGHBORS = ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1))
 
-    EXACT COPY from ArchToolkit (lzpxilfe/ar) geochem_polygonize_dialog.py lines 375-400
-    """
-    a = arr.astype(np.float32, copy=True)
-    a[~np.isfinite(a)] = float(nodata)
-    ysize, xsize = a.shape
-    ds = gdal.GetDriverByName("MEM").Create(
-        "", xsize, ysize, 1, gdal.GDT_Float32)
-    band = ds.GetRasterBand(1)
-    band.WriteArray(a)
-    band.SetNoDataValue(float(nodata))
-    gdal.FillNodata(targetBand=band, maskBand=None, maxSearchDist=max(
-        1, max_dist_px), smoothingIterations=0)
-    filled = band.ReadAsArray()
-    ds = None
-    return filled
+
+def _neighbor_slices(shape, dy, dx):
+    height, width = shape
+    center = (slice(max(0, -dy), height - max(0, dy)),
+              slice(max(0, -dx), width - max(0, dx)))
+    neighbor = (slice(max(0, dy), height - max(0, -dy)),
+                slice(max(0, dx), width - max(0, -dx)))
+    return center, neighbor
+
+
+def mask_linework(r, g, b, available, matched, points):
+    """Find dark line cores and their antialiased blends with adjacent colors."""
+    core = available & mask_black_lines(r, g, b)
+    region = core.copy()
+    if not core.any():
+        return region
+    channels = (r, g, b)
+    pairs = [_neighbor_slices(core.shape, dy, dx) for dy, dx in _NEIGHBORS]
+    for _ in range(2):
+        near_line = np.zeros_like(core)
+        for center, neighbor in pairs:
+            near_line[center] |= region[neighbor]
+        ys, xs = np.nonzero(near_line & available & ~region)
+        if not ys.size:
+            break
+        colors = np.column_stack([c[ys, xs] for c in channels]).astype(np.float32)
+        protected = np.zeros(ys.size, dtype=bool)
+        for point in points:
+            protected |= np.sum((colors - np.asarray(point.rgb, dtype=np.float32)) ** 2, axis=1) <= 100
+        blend = np.zeros_like(protected)
+        height, width = core.shape
+        for dy, dx in _NEIGHBORS:
+            yy, xx = ys + dy, xs + dx
+            inside = (yy >= 0) & (yy < height) & (xx >= 0) & (xx < width)
+            yy, xx = yy.clip(0, height - 1), xx.clip(0, width - 1)
+            donor = np.column_stack([c[yy, xx] for c in channels]).astype(np.float32)
+            scale = (colors * donor).sum(axis=1) / np.maximum((donor ** 2).sum(axis=1), 1)
+            error = ((colors - donor * scale[:, None]) ** 2).sum(axis=1)
+            blend |= (inside & matched[yy, xx] & ~region[yy, xx]
+                      & (scale >= 0.08) & (scale <= 0.92) & (error <= 16 ** 2))
+        keep = blend & ~protected
+        if not keep.any():
+            break
+        region[ys[keep], xs[keep]] = True
+    return region
 
 
 def fill_linework(values, line_mask, nodata, max_distance):
-    """Only interpolate linework; preserve transparent/background/other NoData."""
-    permanent = ~np.isfinite(values) | (values == nodata)
-    holes = line_mask & ~permanent
-    source = values.copy()
-    source[holes] = nodata
-    filled = gdal_fill_nodata(source, nodata, max_distance)
-    source[holes] = filled[holes]
-    source[permanent] = nodata
-    return source
+    """Copy neighboring values across linework without synthesizing averages."""
+    result = values.copy()
+    result[line_mask | ~np.isfinite(result)] = nodata
+    todo = line_mask.copy()
+    pairs = [_neighbor_slices(todo.shape, dy, dx) for dy, dx in _NEIGHBORS]
+    for _ in range(max_distance):
+        if not todo.any():
+            break
+        filled = np.zeros_like(todo)
+        previous = result.copy()
+        for center, neighbor in pairs:
+            take = todo[center] & ~filled[center] & ~todo[neighbor]
+            result[center][take] = previous[neighbor][take]
+            filled[center] |= take
+        if not filled.any():
+            break
+        todo &= ~filled
+    return result
+
+
+def convert_rgb(r, g, b, points, available, nodata, fill_distance=0):
+    values = interp_rgb_to_value(r=r, g=g, b=b, points=points, max_distance=RGB_MATCH_TOLERANCE)
+    background = ((r == 255) & (g == 255) & (b == 255))
+    if points[0] == ABSENT_STOP:
+        background |= values == ABSENT_STOP.value
+    available = available & ~background
+    matched = available & np.isfinite(values)
+    linework = mask_linework(r, g, b, available, matched, points)
+    values[~matched | linework] = nodata
+    if fill_distance > 0:
+        values = fill_linework(values, linework, nodata, fill_distance)
+    return values, {
+        'available_pixels': int(np.count_nonzero(available & ~linework)),
+        'off_legend_pixels': int(np.count_nonzero(available & ~matched & ~linework)),
+        'linework_pixels': int(np.count_nonzero(linework)),
+        'filled_pixels': int(np.count_nonzero(linework & (values != nodata))),
+        'valid_pixels': int(np.count_nonzero(values != nodata)),
+    }
+
+
+def _check_rgb_bands(dataset):
+    rgb = (gdal.GCI_RedBand, gdal.GCI_GreenBand, gdal.GCI_BlueBand)
+    if dataset is None or dataset.RasterCount < 3:
+        raise ValueError('RGB 색상 밴드가 있는 래스터를 선택하세요.')
+    for index, channel in enumerate(rgb, 1):
+        band = dataset.GetRasterBand(index)
+        if band.DataType != gdal.GDT_Byte or band.GetColorInterpretation() != channel:
+            raise ValueError('첫 세 밴드가 8비트 빨강·초록·파랑으로 지정된 래스터가 필요합니다.')
+
+
+def source_has_alpha(layer):
+    provider = layer.dataProvider()
+    if layer.providerType() == 'wms' and provider.dataType(1) in (
+            Qgis.DataType.ARGB32, Qgis.DataType.ARGB32_Premultiplied):
+        return True  # QGIS expands the rendered WMS image to RGBA.
+    if layer.providerType() != 'gdal':
+        raise ValueError('렌더링된 WMS 또는 파일 기반 RGB 래스터를 선택하세요.')
+    dataset = open_file_raster(layer)
+    _check_rgb_bands(dataset)
+    if dataset.RasterCount > 4:
+        raise ValueError('RGB 또는 RGBA로 내보낸 래스터를 선택하세요.')
+    return (dataset.RasterCount == 4
+            and dataset.GetRasterBand(4).GetColorInterpretation() == gdal.GCI_AlphaBand)
+
+
+def read_rgb(path, grid, has_alpha):
+    dataset = gdal.Open(str(path))
+    band = None
+    try:
+        _check_rgb_bands(dataset)
+        check_grid(dataset, grid)
+        channels = []
+        available = np.ones((grid.height, grid.width), dtype=bool)
+        for index in range(1, 4):
+            band = dataset.GetRasterBand(index)
+            pixels = band.ReadAsArray()
+            if pixels is None:
+                raise RuntimeError('RGB 채널을 읽을 수 없습니다.')
+            channels.append(pixels)
+            flags = band.GetMaskFlags()
+            # A new RGBA-looking GeoTIFF can infer alpha for an unrelated fourth band.
+            if not flags & (gdal.GMF_ALL_VALID | gdal.GMF_ALPHA):
+                coverage = band.GetMaskBand().ReadAsArray()
+                if coverage is None:
+                    raise RuntimeError('RGB 유효 범위를 읽을 수 없습니다.')
+                available &= coverage != 0
+        if has_alpha:
+            band = dataset.GetRasterBand(4) if dataset.RasterCount >= 4 else None
+            alpha = band.ReadAsArray() if band is not None else None
+            if alpha is None or band.DataType != gdal.GDT_Byte:
+                raise RuntimeError('RGB 변환 중 알파 밴드가 누락되었습니다.')
+            available &= alpha >= MIN_OPAQUE_ALPHA
+        return (*channels, available)
+    finally:
+        band = None
+        close_dataset(dataset)
 
 
 def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width: int, height: int,

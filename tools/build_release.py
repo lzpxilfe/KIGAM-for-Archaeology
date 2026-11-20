@@ -7,7 +7,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 FILES = (
     '__init__.py', 'main.py', 'zip_processor.py', 'encoding_utils.py', 'archive_utils.py',
-    'raster_utils.py', 'geochem_utils.py', 'pattern_utils.py', 'pattern_preview.py', 'plugin_config.py', 'plugin_config.json',
+    'raster_utils.py', 'raster_output.py', 'geochem_utils.py', 'pattern_utils.py', 'pattern_preview.py',
+    'plugin_config.py', 'plugin_config.json',
     'metadata.txt', 'icon.png', 'LICENSE', 'README.md', 'CHANGELOG.md', 'CITATION.cff',
     'defusedxml/__init__.py', 'defusedxml/ElementTree.py', 'RELEASE_CHECKLIST.md',
 )

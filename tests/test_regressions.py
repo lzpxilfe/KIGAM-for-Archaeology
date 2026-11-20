@@ -296,7 +296,7 @@ class RegressionTests(unittest.TestCase):
         ds = gdal.Open(str(output))
         self.assertIsNotNone(ds)
         self.assertIn(1, np.unique(ds.ReadAsArray()))
-        self.assertTrue(output.with_suffix('.categories.csv').exists())
+        self.assertTrue(raster_utils.codebook_path(output).exists())
         ds = None
         dialog.close()
 
@@ -321,15 +321,19 @@ class RegressionTests(unittest.TestCase):
         iface.mapCanvas().mapSettings().destinationCrs.return_value = layer.crs()
         dialog = MainDialog(iface=iface)
         dialog.wms_layer_combo.setCurrentIndex(dialog.wms_layer_combo.findData(layer.id()))
+        dialog.geochem_preset_combo.setCurrentIndex(dialog.geochem_preset_combo.findData('fe2o3'))
         output = self.root / 'converted.tif'
         with patch('kigam.main.QFileDialog.getSaveFileName', return_value=(str(output), 'GeoTIFF (*.tif)')), \
-                patch('kigam.main.QMessageBox.information'), patch('kigam.main.QMessageBox.critical') as errors:
+                patch('kigam.main.QMessageBox.information'), patch('kigam.main.QMessageBox.warning') as warnings, \
+                patch('kigam.main.QMessageBox.critical') as errors:
             dialog.run_geochem_analysis()
             self.assertFalse(errors.called, errors.call_args)
+            self.assertFalse(warnings.called, warnings.call_args)
         ds = gdal.Open(str(output))
         self.assertIsNotNone(ds)
         self.assertAlmostEqual(ds.ReadAsArray()[0, 0], 4.5)
         self.assertEqual(ds.ReadAsArray()[4, 4], -9999)
+        self.assertEqual(ds.GetMetadataItem('KIGAM_VALUE_KIND'), 'legend_color_estimate')
         ds = None
         self.assertTrue(dialog.geochem_btn.isEnabled())
         dialog.close()

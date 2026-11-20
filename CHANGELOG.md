@@ -6,6 +6,21 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.1.6
+
+### Fixed
+
+- Preserve fractional GeoChem estimates through GeoTIFF and ASCII Grid export. Geology outputs retain integer class IDs.
+- Reject off-legend colors and invalid RGB inputs, preserve transparency and the lowest valid legend interval, and record the rules and pixel counts in the GeoTIFF. Optional linework filling copies an adjacent estimate and reports how many pixels were filled.
+- Verify the written CRS, grid, data type, NoData and presence of data before publishing. Restore previous output files if replacement fails.
+- Name codebooks after the complete raster filename, so GeoTIFF and ASCII Grid exports with the same stem keep independent codebooks.
+- Apply only symbology and labeling from sidecar QML. Prefer an existing image path inside the archive to a filename match.
+- Reject incompatible vector geometry types before export and clean up ZIP extractions that register no layers.
+
+### Added
+
+- Reference raster selection for producing geology and GeoChem layers with identical CRS, origin, dimensions and pixel size for MaxEnt.
+
 ## [0.1.5] – 2026-10-21
 
 ### Fixed
