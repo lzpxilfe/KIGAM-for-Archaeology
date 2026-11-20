@@ -11,6 +11,7 @@ FILES = (
     'plugin_config.py', 'plugin_config.json',
     'metadata.txt', 'icon.png', 'LICENSE', 'README.md', 'CHANGELOG.md', 'CITATION.cff',
     'defusedxml/__init__.py', 'defusedxml/ElementTree.py', 'RELEASE_CHECKLIST.md',
+    'help_dialog.py', 'docs/assets/kigam-wms-workflow.gif',
 )
 
 
@@ -23,7 +24,11 @@ def build(output_dir):
     destination = output_dir / f'KIGAM_for_Archaeology_v{version}.zip'
     with zipfile.ZipFile(destination, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
         for name in FILES:
-            archive.write(ROOT / name, 'KigamGeoDownloader/' + name)
+            source = ROOT / name
+            entry = zipfile.ZipInfo.from_file(source, 'KigamGeoDownloader/' + name)
+            entry.create_system = 3
+            entry.external_attr = 0o100644 << 16
+            archive.writestr(entry, source.read_bytes(), compress_type=zipfile.ZIP_DEFLATED)
     with zipfile.ZipFile(destination) as archive:
         if archive.testzip() is not None:
             raise RuntimeError('Invalid release ZIP')

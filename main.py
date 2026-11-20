@@ -16,6 +16,7 @@ import tempfile
 import numpy as np
 from osgeo import gdal
 from .zip_processor import ZipProcessor
+from .help_dialog import HelpDialog, WMS_PAGE
 from .pattern_utils import scale_patterns
 from .pattern_preview import PatternPreviewDialog
 from . import geochem_utils, raster_output, raster_utils
@@ -142,6 +143,7 @@ VECTOR_EXPORT_FIELD_CANDIDATES = _cfg_str_list(
 NODATA_VALUE = _cfg_float(RASTER_CONFIG.get(
     "nodata"), DEFAULT_RASTER_CONFIG.get("nodata", -9999.0))
 WARP_FLOAT32 = 6  # QGIS gdal:warpreproject option index, including "use input type".
+WARP_INT32 = 5
 RASTERIZE_INT32 = 4  # QGIS gdal:rasterize option index.
 EXPORT_GEOMETRIES = (Qgis.GeometryType.Point, Qgis.GeometryType.Line, Qgis.GeometryType.Polygon)
 MAXENT_RESAMPLING = _cfg_int(
@@ -245,24 +247,30 @@ class MainDialog(QDialog):
         layout.addWidget(load_group)
 
         # Section 3: GeoChem Analysis
-        geochem_group = QGroupBox("3. 지구화학 분석 (GeoChem RGB -> Value)")
+        geochem_group = QGroupBox("3. 지구화학도 범례 등급 변환")
         geochem_group.setToolTip(
-            "WMS 또는 파일 기반 RGB 지구화학도에서 범례를 기준으로 농도를 추정합니다.")
+            "KIGAM WMS 또는 8비트 RGB 지도에서 공식 범례 등급을 읽습니다.")
         geochem_layout = QFormLayout()
 
         # WMS Layer Selection (new!)
         self.wms_layer_combo = QComboBox()
         self.wms_layer_combo.setToolTip(
             "분석할 렌더링된 WMS 또는 RGB 래스터를 선택하세요.")
-        geochem_layout.addRow("WMS / RGB 레이어", self.wms_layer_combo)
+        self.wms_help_btn = QPushButton('WMS 연결 도움말')
+        self.wms_help_btn.clicked.connect(lambda: self.show_help(WMS_PAGE))
+        wms_row = QHBoxLayout()
+        wms_row.addWidget(self.wms_layer_combo, 1)
+        wms_row.addWidget(self.wms_help_btn)
+        geochem_layout.addRow("WMS / RGB 레이어", wms_row)
 
         # Preset Selection
         self.geochem_preset_combo = QComboBox()
         self.geochem_preset_combo.setToolTip(
-            "레이어의 원소·스타일과 범례가 일치하는 프리셋을 선택하세요. 결과는 범례 색상으로 추정한 값입니다.")
+            "원본 레이어와 같은 원소를 선택하세요. 결과 셀은 농도 구간을 나타내는 등급 ID입니다.")
         self.geochem_preset_combo.addItem('원본 범례와 일치하는 원소 선택', None)
         for k, p in geochem_utils.PRESETS.items():
             self.geochem_preset_combo.addItem(p.label, k)
+        self.wms_layer_combo.activated.connect(self._suggest_wms_preset)
         geochem_layout.addRow("원소 프리셋:", self.geochem_preset_combo)
         geochem_group.setLayout(geochem_layout)
         layout.addWidget(geochem_group)
@@ -280,8 +288,10 @@ class MainDialog(QDialog):
         self.geochem_res_spin.setToolTip("변환될 결과 래스터의 해상도(픽셀 크기)를 설정합니다.")
         geochem_layout.addRow("해상도 (Resolution):", self.geochem_res_spin)
 
-        self.geochem_fill_lines = QCheckBox('경계선 픽셀에 가까운 유효값 복사')
-        self.geochem_fill_lines.setToolTip('채운 값은 주변 셀에서 복사한 추정값입니다. 채운 셀 수는 로그와 GeoTIFF에 기록합니다.')
+        self.geochem_fill_lines = QCheckBox('검은 경계선 보간')
+        self.geochem_fill_lines.setToolTip(
+            '양쪽에 유효한 등급이 있는 좁은 검은 틈을 가까운 원본 등급으로 채웁니다. '
+            '채운 셀 수는 로그와 GeoTIFF에 기록합니다.')
         geochem_layout.addRow('', self.geochem_fill_lines)
 
         # Refresh Button for layer combos
@@ -289,9 +299,9 @@ class MainDialog(QDialog):
         refresh_layers_btn.clicked.connect(self.refresh_geochem_layer_combos)
         geochem_layout.addRow("", refresh_layers_btn)
 
-        self.geochem_btn = QPushButton("RGB 래스터 수치화 실행 (WMS -> Raster)")
+        self.geochem_btn = QPushButton("범례 등급 래스터와 대응표 저장")
         self.geochem_btn.setToolTip(
-            "현재 선택된 원소 프리셋과 범위/해상도를 사용하여 RGB 래스터를 수치 래스터로 변환합니다.")
+            "공식 범례의 1~10등급 ID와 농도 구간 대응표를 저장합니다.")
         self.geochem_btn.clicked.connect(self.run_geochem_analysis)
         geochem_layout.addRow("", self.geochem_btn)
 
@@ -310,7 +320,7 @@ class MainDialog(QDialog):
 
         # Add descriptive help text (In-place help)
         help_lbl = QLabel(
-            "💡 팁: 여러 지질도(Vector)를 선택하면 하나로 병합됩니다.\n      수치화된 지구화학도(Raster)도 선택하여 변환할 수 있습니다.")
+            "같은 지오메트리 유형의 지질도를 병합하거나 지구화학 등급 래스터 하나를 내보냅니다.")
         help_lbl.setStyleSheet(
             "color: #666666; font-size: 11px; margin-bottom: 5px;")
         maxent_layout.addWidget(help_lbl)
@@ -369,7 +379,8 @@ class MainDialog(QDialog):
         bottom_layout = QHBoxLayout()
 
         self.help_btn = QPushButton("도움말 (?)")
-        self.help_btn.clicked.connect(self.show_help)
+        self.help_btn.setShortcut("F1")
+        self.help_btn.clicked.connect(lambda: self.show_help())
         bottom_layout.addWidget(self.help_btn)
 
         bottom_layout.addStretch()
@@ -378,8 +389,6 @@ class MainDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         bottom_layout.addWidget(self.buttons)
 
-        layout.addLayout(bottom_layout)
-
         contents = QWidget()
         contents.setLayout(layout)
         scroll = QScrollArea()
@@ -387,23 +396,18 @@ class MainDialog(QDialog):
         scroll.setWidget(contents)
         outer = QVBoxLayout(self)
         outer.addWidget(scroll)
+        outer.addLayout(bottom_layout)
 
         # Auto-populate layer combo boxes on dialog open
         self.refresh_layer_list()
         self.refresh_geochem_layer_combos()
 
-    def show_help(self):
-        help_text = """
-        <h3>KIGAM for Archaeology 사용 가이드</h3>
-        <p><b>1. 데이터 다운로드:</b> KIGAM 웹사이트에서 지질도 데이터를 다운로드합니다.</p>
-        <p><b>2. 지질도 불러오기:</b> 다운로드한 ZIP 파일을 선택하고 '자동 로드'를 클릭하면 스타일과 라벨이 자동 적용됩니다.</p>
-        <p><b>3. 지구화학 분석</b> WMS 또는 RGB 지구화학도의 색상에서 농도를 추정합니다. 원본 범례와 일치하는 원소를 선택하세요.</p>
-        <p><b>4. 래스터 변환</b> 같은 지오메트리 유형의 지질도를 병합하거나 지구화학 래스터 하나를 내보냅니다.
-        MaxEnt에 함께 사용할 파일은 동일한 기준 래스터 격자를 선택하세요.</p>
-        <br>
-        <p><i>* 개발 기준: ArchToolkit (lzpxilfe/ar) 동기화 버전</i></p>
-        """
-        QMessageBox.information(self, "도움말", help_text)
+    def show_help(self, page=0):
+        dialog = HelpDialog(self, page)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     def apply_selected_pattern_scale(self):
         layers = self.iface.layerTreeView().selectedLayers() if self.iface else []
@@ -481,6 +485,12 @@ class MainDialog(QDialog):
             f"대상지 {self.extent_layer_combo.count() - 1}개"
         )
 
+    def _suggest_wms_preset(self):
+        layer_id = self.wms_layer_combo.currentData()
+        layer = QgsProject.instance().mapLayer(layer_id) if layer_id else None
+        preset = geochem_utils.wms_preset(layer.source()) if layer and layer.providerType() == 'wms' else None
+        self.geochem_preset_combo.setCurrentIndex(self.geochem_preset_combo.findData(preset.key if preset else None))
+
     def refresh_layer_list(self):
         checked = {}
         for index in range(self.layer_list.count()):
@@ -501,6 +511,12 @@ class MainDialog(QDialog):
                     self.export_reference_combo.addItem(layer.name(), layer.id())
                 if '(수치화)' in layer.name() or layer.customProperty('kigam/geochem_preset'):
                     rasters.append(layer)
+                else:
+                    try:
+                        if geochem_utils.read_class_preset(layer):
+                            rasters.append(layer)
+                    except (ValueError, RuntimeError) as exc:
+                        self.log(f'{layer.name()}의 범례 메타데이터를 확인하세요. {exc}')
             elif (layer.type() == Qgis.LayerType.Vector and layer.geometryType() in EXPORT_GEOMETRIES
                   and self._resolve_vector_export_field(layer) is not None):
                 vectors.append(layer)
@@ -566,7 +582,8 @@ class MainDialog(QDialog):
 
         if target_layer.isValid():
             canvas = self.iface.mapCanvas()
-            transform = QgsCoordinateTransform(target_layer.crs(), canvas.mapSettings().destinationCrs(), QgsProject.instance())
+            transform = QgsCoordinateTransform(
+                target_layer.crs(), canvas.mapSettings().destinationCrs(), QgsProject.instance())
             canvas.setExtent(transform.transformBoundingBox(target_layer.extent()))
             canvas.refresh()
 
@@ -679,19 +696,20 @@ class MainDialog(QDialog):
         vectors = [layer for layer in selected if layer.type() == Qgis.LayerType.Vector]
         rasters = [layer for layer in selected if isinstance(layer, QgsRasterLayer)]
         if (vectors and rasters) or len(rasters) > 1:
-            QMessageBox.warning(self, '선택 확인', '지질 벡터 여러 개 또는 수치 래스터 한 개를 선택하세요.')
+            QMessageBox.warning(self, '선택 확인', '지질 벡터 여러 개 또는 지구화학 래스터 한 개를 선택하세요.')
             return
         if len({layer.geometryType() for layer in vectors}) > 1:
             QMessageBox.warning(self, '선택 확인', '병합할 벡터의 지오메트리 유형을 맞추세요. 점·선·면은 각각 내보내야 합니다.')
             return
 
         try:
+            class_preset = geochem_utils.read_class_preset(rasters[0]) if rasters else None
             reference_id = self.export_reference_combo.currentData()
             reference = project.mapLayer(reference_id) if reference_id else None
             if reference_id and reference is None:
                 raise ValueError('기준 래스터가 삭제되었습니다. 목록을 새로고침하세요.')
             grid = raster_utils.reference_grid(reference) if reference is not None else None
-            nodata = output_nodata(categorical=bool(vectors))
+            nodata = output_nodata(categorical=bool(vectors or class_preset))
         except (ValueError, RuntimeError) as exc:
             QMessageBox.warning(self, '격자 또는 설정 확인', str(exc))
             return
@@ -742,32 +760,40 @@ class MainDialog(QDialog):
                         raise ValueError('수치 래스터에 올바른 CRS를 지정하세요.')
                     processing.run('gdal:warpreproject', {
                         'INPUT': raster, 'SOURCE_CRS': raster.crs(), 'TARGET_CRS': grid.crs,
-                        'RESAMPLING': MAXENT_RESAMPLING, 'NODATA': nodata,
-                        'TARGET_RESOLUTION': grid.resolution, 'OPTIONS': '', 'DATA_TYPE': WARP_FLOAT32,
+                        'RESAMPLING': 0 if class_preset else MAXENT_RESAMPLING, 'NODATA': nodata,
+                        'TARGET_RESOLUTION': grid.resolution, 'OPTIONS': '',
+                        'DATA_TYPE': WARP_INT32 if class_preset else WARP_FLOAT32,
                         'TARGET_EXTENT': grid.extent, 'TARGET_EXTENT_CRS': grid.crs,
                         'MULTITHREADING': MAXENT_MULTITHREADING, 'EXTRA': '', 'OUTPUT': str(intermediate)})
-                    data_type = gdal.GDT_Float32
+                    data_type = gdal.GDT_Int32 if class_preset else gdal.GDT_Float32
                 gdal.ErrorReset()
-                output = gdal.Translate(str(staged), str(intermediate),
-                                        format='AAIGrid' if suffix == '.asc' else 'GTiff')
+                options = {'format': 'AAIGrid' if suffix == '.asc' else 'GTiff'}
+                if class_preset:
+                    options['metadataOptions'] = [f'{k}={v}' for k, v in class_preset.metadata().items()]
+                output = gdal.Translate(str(staged), str(intermediate), **options)
                 if output is None:
                     raise RuntimeError('GDAL 출력 생성에 실패했습니다.')
                 raster_output.close_dataset(output)
                 output = None
                 if gdal.GetLastErrorType() >= gdal.CE_Failure:
                     raise RuntimeError(gdal.GetLastErrorMsg())
+                class_ids = codes.values() if codes is not None else None
+                if class_preset:
+                    class_ids = class_preset.class_ids
                 omitted = raster_output.verify_raster(
                     staged, grid, nodata, data_type,
-                    class_ids=codes.values() if codes is not None else None,
+                    class_ids=class_ids,
                     ascii_source=intermediate if suffix == '.asc' else None)
                 if codes is not None:
                     raster_utils.write_codebook(staged, codes)
-                raster_output.publish_raster(staged, destination, categories=codes is not None)
-            if codes is not None:
-                self.log(f'지질 분류 ID 대응표: {raster_utils.codebook_path(destination)}')
+                elif class_preset:
+                    geochem_utils.write_class_codebook(staged, class_preset)
+                raster_output.publish_raster(staged, destination, categories=class_ids is not None)
+            if class_ids is not None:
+                self.log(f'분류 ID 대응표: {raster_utils.codebook_path(destination)}')
             self.log(f'내보내기: {grid.crs.authid()}, {grid.width} × {grid.height}, {grid.resolution:g} m')
             message = f'래스터 내보내기 완료: {destination}'
-            if omitted:
+            if omitted and codes is not None:
                 missing = [value for value, code in codes.items() if code in omitted]
                 preview = ', '.join(missing[:8]) + ('…' if len(missing) > 8 else '')
                 detail = f'출력 격자에 기록되지 않은 지질 분류 {len(missing)}개: {preview}'
@@ -793,8 +819,10 @@ class MainDialog(QDialog):
             return
 
         try:
+            if layer.providerType() == 'wms':
+                geochem_utils.validate_wms_preset(layer.source(), preset)
             has_alpha = geochem_utils.source_has_alpha(layer)
-            nodata = output_nodata()
+            nodata = output_nodata(categorical=True)
             canvas = self.iface.mapCanvas()
             extent, source_crs = canvas.extent(), canvas.mapSettings().destinationCrs()
             selected_id = self.extent_layer_combo.currentData()
@@ -808,7 +836,7 @@ class MainDialog(QDialog):
             QMessageBox.warning(self, '입력 확인', str(exc))
             return
 
-        path, _ = QFileDialog.getSaveFileName(self, '추정 농도 래스터 저장', '', 'GeoTIFF (*.tif *.tiff)')
+        path, _ = QFileDialog.getSaveFileName(self, '지구화학 등급 래스터 저장', '', 'GeoTIFF (*.tif *.tiff)')
         if not path:
             return
         destination = Path(path)
@@ -841,35 +869,36 @@ class MainDialog(QDialog):
                 progress.setLabelText('범례 색상 매칭 중…')
                 if progress.wasCanceled():
                     return
-                r, g, b, available = geochem_utils.read_rgb(rgb_path, grid, has_alpha)
-                values, stats = geochem_utils.convert_rgb(
-                    r, g, b, preset.points, available, nodata, fill_distance)
+                rgb = geochem_utils.read_rgb(rgb_path, grid, has_alpha)
+                values, stats = geochem_utils.classify_rgb(rgb, preset, nodata, fill_distance)
 
             if not stats['valid_pixels']:
                 raise RuntimeError('범례와 일치하는 유효한 픽셀이 없습니다. 원소·스타일·분석 범위를 확인하세요.')
             rejected = stats['off_legend_pixels']
             percent = 100 * rejected / max(1, stats['available_pixels'])
             report = (f'범례 밖 {rejected:,}셀 ({percent:.1f}%), 경계선 {stats["linework_pixels"]:,}셀, '
-                      f'주변 값 복사 {stats["filled_pixels"]:,}셀, 유효 {stats["valid_pixels"]:,}셀')
+                      f'보간 {stats["filled_pixels"]:,}셀, 유효 {stats["valid_pixels"]:,}셀\n'
+                      f'회색 무자료 {stats["absent_pixels"]:,}셀, 흰 배경 {stats["white_pixels"]:,}셀, '
+                      f'알파 제외 {stats["alpha_masked_pixels"]:,}셀, 원본 마스크 {stats["source_masked_pixels"]:,}셀')
             self.log(report)
-            progress.setLabelText('추정 농도 파일 검증 중…')
+            progress.setLabelText('등급 래스터와 대응표 검증 중…')
             progress.setValue(80)
             if progress.wasCanceled():
                 return
             metadata = {
-                'KIGAM_VALUE_KIND': 'legend_color_estimate',
-                'KIGAM_PRESET': preset.key,
-                'KIGAM_UNIT': preset.unit,
-                'KIGAM_RGB_TOLERANCE': str(geochem_utils.RGB_MATCH_TOLERANCE),
-                'KIGAM_LINE_FILL_DISTANCE_PX': str(fill_distance),
+                **preset.metadata(),
+                'KIGAM_LINE_FILL_METHOD': 'opposite_side_nearest_class' if fill_distance else 'off',
+                'KIGAM_LINE_FILL_MAX_GAP_PX': str(fill_distance),
                 **{f'KIGAM_{key.upper()}': str(value) for key, value in stats.items()},
             }
             with raster_output.staging_directory(destination) as temp_dir:
                 staged = Path(temp_dir) / destination.name
-                raster_output.write_value_raster(staged, values, grid, nodata, metadata)
-                raster_output.publish_raster(staged, destination)
+                raster_output.write_value_raster(staged, values, grid, nodata, metadata,
+                                                 data_type=gdal.GDT_Int32, class_ids=preset.class_ids)
+                geochem_utils.write_class_codebook(staged, preset)
+                raster_output.publish_raster(staged, destination, categories=True)
 
-            output = QgsRasterLayer(str(destination), f'{preset.label} (수치화)')
+            output = QgsRasterLayer(str(destination), f'{preset.label} (등급)')
             if not output.isValid():
                 raise RuntimeError(f'파일은 저장됐지만 QGIS에 결과 레이어를 불러오지 못했습니다. {destination}')
             output.setCustomProperty('kigam/geochem_preset', preset.key)
@@ -878,9 +907,10 @@ class MainDialog(QDialog):
             self.refresh_layer_list()
             progress.setValue(100)
             progress.close()
-            message = f'범례 기반 추정 농도를 저장했습니다.\n{destination}\n{report}'
+            message = f'등급 래스터와 농도 구간 대응표를 저장했습니다.\n{destination}\n{report}'
             if percent >= 5:
-                QMessageBox.warning(self, '범례 일치 확인', message + '\n원본 범례와 프리셋을 다시 확인하세요.')
+                QMessageBox.warning(self, '범례 일치 확인',
+                                    message + '\n원소와 스타일을 확인하세요. 혼합색도 미분류로 남습니다.')
             else:
                 QMessageBox.information(self, '완료', message)
         except Exception as exc:
@@ -892,26 +922,15 @@ class MainDialog(QDialog):
 
     @staticmethod
     def _style_geochem_result(layer, preset):
-        from qgis.core import QgsColorRampShader, QgsRasterShader, QgsSingleBandPseudoColorRenderer
+        from qgis.core import QgsPalettedRasterRenderer
         from qgis.PyQt.QtGui import QColor
 
-        points = [point for point in preset.points if point != geochem_utils.ABSENT_STOP]
-        minimum, maximum = points[0].value, points[-1].value
-        ramp = QgsColorRampShader()
-        ramp.setColorRampType(Qgis.ShaderInterpolationMethod.Linear)
-        ramp.setColorRampItemList([
-            QgsColorRampShader.ColorRampItem(point.value, QColor(*point.rgb),
-                                             f'{point.value:g} {preset.unit}')
-            for point in points
-        ])
-        ramp.setMinimumValue(minimum)
-        ramp.setMaximumValue(maximum)
-        shader = QgsRasterShader()
-        shader.setRasterShaderFunction(ramp)
-        renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
-        renderer.setClassificationMin(minimum)
-        renderer.setClassificationMax(maximum)
-        layer.setRenderer(renderer)
+        classes = [
+            QgsPalettedRasterRenderer.Class(class_id, QColor(*geochem_utils.rgb_channels(color)),
+                                            preset.class_label(class_id))
+            for class_id, color in zip(preset.class_ids, preset.colors)
+        ]
+        layer.setRenderer(QgsPalettedRasterRenderer(layer.dataProvider(), 1, classes))
 
     def get_settings(self):
         return {

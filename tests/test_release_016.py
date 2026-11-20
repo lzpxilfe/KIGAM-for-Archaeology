@@ -16,8 +16,10 @@ from qgis.core import (
 )
 from qgis.PyQt.QtCore import QBuffer, QIODevice, Qt
 from qgis.PyQt.QtGui import QColor, QImage
+from qgis.PyQt.QtWidgets import QApplication
 
 from kigam import geochem_utils, raster_output, raster_utils
+from kigam.help_dialog import HelpDialog
 from kigam.main import MainDialog
 from kigam.zip_processor import ZipProcessor
 from test_regressions import shapefile, png
@@ -31,7 +33,7 @@ def wms_capabilities(url):
       <GetCapabilities><Format>application/vnd.ogc.wms_xml</Format>{endpoint}</GetCapabilities>
       <GetMap><Format>image/png</Format>{endpoint}</GetMap>
     </Request><Exception><Format>application/vnd.ogc.se_xml</Format></Exception>
-    <Layer><Name>geochem</Name><Title>GeoChem</Title><SRS>EPSG:5186</SRS>
+    <Layer><Name>L_geochemMP_FE2O3</Name><Title>GeoChem</Title><SRS>EPSG:5186</SRS>
     <LatLonBoundingBox minx="126" miny="36" maxx="128" maxy="38"/>
     <BoundingBox SRS="EPSG:5186" minx="200000" miny="500000" maxx="200100" maxy="500100"/>
     </Layer></Capability></WMT_MS_Capabilities>""".encode()
@@ -107,32 +109,114 @@ class Release016Tests(unittest.TestCase):
         self.assertFalse(warnings.called, warnings.call_args)
         self.assertTrue(done.called)
 
-    def test_off_legend_and_lowest_real_color(self):
-        rgb = np.array([[(90, 90, 10), (1, 39, 116), (204, 204, 204), (0, 255, 0)]], dtype=np.uint8)
-        preset = geochem_utils.PRESETS['pb']
-        values, stats = geochem_utils.convert_rgb(*np.moveaxis(rgb, -1, 0), preset.points,
-                                                 np.ones(rgb.shape[:2], bool), -9999)
-        self.assertEqual(values[0, 0], -9999)
-        self.assertAlmostEqual(values[0, 1], 18.017, places=3)
-        self.assertEqual(values[0, 2], -9999)
-        self.assertEqual(values[0, 3], 24)
-        self.assertEqual(stats['off_legend_pixels'], 1)
+    def test_help_buttons_open_the_right_page_and_copy_official_wms_address(self):
+        dialog = MainDialog()
+        self.addCleanup(dialog.close)
+        visited = []
+        clipboard = QApplication.clipboard()
+        old_text = clipboard.text()
+        self.addCleanup(clipboard.setText, old_text)
 
-    def test_linework_and_halo_get_neighbor_values_only_on_request(self):
-        pixels = [(255, 255, 255), (230, 0, 0), (115, 0, 0), (0, 0, 0),
-                  (255, 255, 0), (115, 12, 12)]
-        rgb = np.array([pixels] * 3, dtype=np.uint8)
-        args = (*np.moveaxis(rgb, -1, 0), geochem_utils.FE2O3_POINTS,
-                np.ones(rgb.shape[:2], bool), -9999)
-        values, stats = geochem_utils.convert_rgb(*args)
+        def inspect(help_dialog):
+            visited.append(help_dialog.tabs.tabText(help_dialog.tabs.currentIndex()))
+            self.assertEqual(help_dialog.tabs.count(), 4)
+            if help_dialog.tabs.currentIndex() == 1:
+                self.assertTrue(help_dialog.address.isReadOnly())
+                help_dialog.copy_button.click()
+                self.assertEqual(
+                    clipboard.text(),
+                    'https://data.kigam.re.kr/mgeo/geoserver/Geochemical_map/wms',
+                )
+                self.assertTrue(help_dialog.copy_status.text())
+
+        with patch.object(HelpDialog, 'exec', inspect):
+            dialog.help_btn.click()
+            dialog.wms_help_btn.click()
+        self.assertEqual(visited, ['시작하기', 'WMS 연결'])
+
+    def test_observed_iron_rgb_and_disjoint_nodata_reasons(self):
+        pixels = np.array([[(0, 0, 255), (243, 168, 91), (133, 0, 0), (0, 0, 100),
+                            (192, 192, 192), (85, 255, 0), (255, 255, 255), (0, 255, 0),
+                            (0, 255, 0)]], dtype=np.uint8)
+        coverage = np.array([[True] * 8 + [False]])
+        opaque = np.array([[True] * 7 + [False, False]])
+        rgb = geochem_utils.RGBInput(*np.moveaxis(pixels, -1, 0), coverage, opaque)
+        values, stats = geochem_utils.classify_rgb(rgb, geochem_utils.PRESETS['fe2o3'], -9999)
+        np.testing.assert_array_equal(values, [[2, 7, 10, 1, -9999, -9999, -9999, -9999, -9999]])
+        self.assertEqual(stats['off_legend_pixels'], 1)
+        self.assertEqual(stats['absent_pixels'], 1)
+        self.assertEqual(stats['white_pixels'], 1)
+        self.assertEqual(stats['alpha_masked_pixels'], 1)
+        self.assertEqual(stats['source_masked_pixels'], 1)
+
+    def test_linework_and_halo_get_neighbor_classes_only_on_request(self):
+        pixels = [(255, 255, 255), (255, 0, 0), (115, 0, 0), (0, 0, 0),
+                  (255, 255, 0), (133, 0, 0)]
+        channels = np.array([pixels] * 3, dtype=np.uint8)
+        visible = np.ones(channels.shape[:2], bool)
+        rgb = geochem_utils.RGBInput(*np.moveaxis(channels, -1, 0), visible, visible)
+        args = (rgb, geochem_utils.PRESETS['fe2o3'], -9999)
+        values, stats = geochem_utils.classify_rgb(*args)
         self.assertTrue(np.all(values[:, 2:4] == -9999))
         self.assertEqual(stats['filled_pixels'], 0)
-        filled, stats = geochem_utils.convert_rgb(*args, fill_distance=3)
+        filled, stats = geochem_utils.classify_rgb(*args, fill_distance=3)
         self.assertTrue(np.all(filled[:, 0] == -9999))
-        self.assertTrue(np.all(filled[:, 2] == 12))
-        np.testing.assert_allclose(filled[:, 3], 7.1)
-        self.assertTrue(np.all(filled[:, 5] == 51))
+        self.assertTrue(np.all(filled[:, 2] == 9))
+        self.assertTrue(np.all(filled[:, 3] == 6))
+        self.assertTrue(np.all(filled[:, 5] == 10))
         self.assertEqual(stats['filled_pixels'], 6)
+
+    def test_fill_only_bridges_a_gap_with_two_original_sides(self):
+        nodata = -9999
+        values = np.array([[3, nodata, nodata, 3, nodata, nodata, 9]], dtype=np.int32)
+        line = np.array([[False, True, True, False, False, True, False]])
+        filled = geochem_utils.fill_linework(values, line, nodata, 2)
+        np.testing.assert_array_equal(filled, [[3, 3, 3, 3, nodata, nodata, 9]])
+        np.testing.assert_array_equal(geochem_utils.fill_linework(values, line, nodata, 1), values)
+
+    def test_bridge_preserves_distinct_classes_on_either_side(self):
+        values = np.array([[2, -9999, -9999, 9]], dtype=np.int32)
+        filled = geochem_utils.fill_linework(values, values == -9999, -9999, 2)
+        np.testing.assert_array_equal(filled, [[2, 2, 9, 9]])
+
+    def test_diagonal_bridge_uses_physical_pixel_distance(self):
+        nodata = -9999
+        values = np.full((3, 3), nodata, dtype=np.int32)
+        values[0, 2] = values[2, 0] = 8
+        line = np.zeros(values.shape, dtype=bool)
+        line[1, 1] = True
+        self.assertEqual(geochem_utils.fill_linework(values, line, nodata, 1)[1, 1], nodata)
+        self.assertEqual(geochem_utils.fill_linework(values, line, nodata, 2)[1, 1], 8)
+
+    def test_geochem_checkbox_and_output_metadata(self):
+        colors = np.array([[(0, 0, 255, 255), (0, 0, 0, 255), (0, 0, 0, 255), (0, 0, 255, 255),
+                           (192, 192, 192, 255), (0, 0, 0, 255), (255, 0, 0, 255), (0, 255, 0, 127)]],
+                          dtype=np.uint8)
+        path = self.raster('gap_rgb.tif', np.moveaxis(colors, -1, 0), rgb=True)
+        layer = self.project.addMapLayer(QgsRasterLayer(str(path), 'RGB'))
+        iface = MagicMock()
+        iface.mapCanvas().extent.return_value = layer.extent()
+        iface.mapCanvas().mapSettings().destinationCrs.return_value = layer.crs()
+        dialog = MainDialog(iface=iface)
+        self.addCleanup(dialog.close)
+        self.assertFalse(dialog.geochem_fill_lines.isChecked())
+        dialog.geochem_res_spin.setValue(10)
+        dialog.wms_layer_combo.setCurrentIndex(dialog.wms_layer_combo.findData(layer.id()))
+        dialog.geochem_preset_combo.setCurrentIndex(dialog.geochem_preset_combo.findData('fe2o3'))
+        for enabled, method, valid in [(False, 'off', -9999), (True, 'opposite_side_nearest_class', 2)]:
+            dialog.geochem_fill_lines.setChecked(enabled)
+            output = self.root / f'gap-{enabled}.tif'
+            with patch('kigam.main.QFileDialog.getSaveFileName', return_value=(str(output), '')), \
+                    patch('kigam.main.QMessageBox.critical') as errors, \
+                    patch('kigam.main.QMessageBox.warning') as warnings, patch('kigam.main.QMessageBox.information'):
+                dialog.run_geochem_analysis()
+            self.assertFalse(errors.called, errors.call_args)
+            self.assertFalse(warnings.called, warnings.call_args)
+            dataset = gdal.Open(str(output))
+            np.testing.assert_array_equal(dataset.ReadAsArray(), [[2, valid, valid, 2, -9999, -9999, 9, -9999]])
+            self.assertEqual(dataset.GetMetadataItem('KIGAM_LINE_FILL_METHOD'), method)
+            self.assertEqual(dataset.GetMetadataItem('KIGAM_FILLED_PIXELS'), '2' if enabled else '0')
+            dataset = None
 
     def test_all_colors_rejected_keeps_existing_result(self):
         bands = np.array([[[90, 90]], [[90, 90]], [[10, 10]]], dtype=np.uint8)
@@ -175,19 +259,27 @@ class Release016Tests(unittest.TestCase):
         self.addCleanup(thread.join)
         self.addCleanup(server.shutdown)
         url = f'http://127.0.0.1:{server.server_port}/wms'
-        uri = f'crs=EPSG:5186&format=image/png&layers=geochem&styles=&url={url}'
+        uri = f'crs=EPSG:5186&format=image/png&layers=L_geochemMP_FE2O3&styles=&url={url}'
         layer = QgsRasterLayer(uri, 'Fixture WMS', 'wms')
         self.assertTrue(layer.isValid())
+        self.project.addMapLayer(layer)
+        dialog = MainDialog()
+        self.addCleanup(dialog.close)
+        index = dialog.wms_layer_combo.findData(layer.id())
+        dialog.wms_layer_combo.setCurrentIndex(index)
+        dialog.wms_layer_combo.activated.emit(index)
+        self.assertEqual(dialog.geochem_preset_combo.currentData(), 'fe2o3')
+        geochem_utils.validate_wms_preset(layer.source(), geochem_utils.PRESETS['fe2o3'])
         has_alpha = geochem_utils.source_has_alpha(layer)
         self.assertTrue(has_alpha)
         grid = raster_utils.metric_grid(layer.extent(), layer.crs(), 10)
         path = self.root / 'wms.tif'
         self.assertTrue(geochem_utils.export_geotiff(
             layer, str(path), grid.extent, grid.width, grid.height, grid.crs))
-        r, g, b, available = geochem_utils.read_rgb(path, grid, has_alpha)
-        self.assertFalse(available[0, 0])
-        self.assertTrue(available[1:, 1:].all())
-        self.assertEqual((r[1, 1], g[1, 1], b[1, 1]), (0, 255, 0))
+        rgb = geochem_utils.read_rgb(path, grid, has_alpha)
+        self.assertFalse(rgb.opaque[0, 0])
+        self.assertTrue(rgb.opaque[1:, 1:].all())
+        self.assertEqual((rgb.r[1, 1], rgb.g[1, 1], rgb.b[1, 1]), (0, 255, 0))
 
     def test_fourth_band_is_only_used_as_alpha_if_declared(self):
         path = self.root / 'multiband.tif'
@@ -205,9 +297,54 @@ class Release016Tests(unittest.TestCase):
         rendered = self.root / 'rendered.tif'
         self.assertTrue(geochem_utils.export_geotiff(
             layer, str(rendered), grid.extent, grid.width, grid.height, grid.crs))
-        r, g, b, available = geochem_utils.read_rgb(rendered, grid, has_alpha)
-        self.assertTrue(available.all())
-        self.assertEqual((r[0, 0], g[0, 0], b[0, 0]), (0, 255, 0))
+        rgb = geochem_utils.read_rgb(rendered, grid, has_alpha)
+        self.assertTrue((rgb.coverage & rgb.opaque).all())
+        self.assertEqual((rgb.r[0, 0], rgb.g[0, 0], rgb.b[0, 0]), (0, 255, 0))
+
+    def test_wms_uri_detects_original_layer_and_rejects_other_style_or_element(self):
+        preset = geochem_utils.PRESETS['zn']
+        uri = ('crs=EPSG:4326&format=image/png&layers=Geochemical_map%3AL_geochemMP_ZN'
+               f'&styles=&url={geochem_utils.WMS_URL}')
+        self.assertIs(geochem_utils.wms_preset(uri), preset)
+        geochem_utils.validate_wms_preset(uri, preset)
+        with self.assertRaisesRegex(ValueError, '원소'):
+            geochem_utils.validate_wms_preset(uri, geochem_utils.PRESETS['pb'])
+        with self.assertRaisesRegex(ValueError, '스타일'):
+            geochem_utils.validate_wms_preset(uri.replace('styles=&', 'styles=other&'), preset)
+        with self.assertRaisesRegex(ValueError, 'PNG'):
+            geochem_utils.validate_wms_preset(uri.replace('image/png', 'image/jpeg'), preset)
+        with self.assertRaisesRegex(ValueError, '원소 레이어 하나'):
+            geochem_utils.validate_wms_preset(uri + '&layers=L_geochemMP_PB', preset)
+
+    def test_reopened_class_file_exports_integer_ids_with_range_csv(self):
+        template = self.raster('template.tif', np.ones((2, 2)))
+        grid = raster_utils.reference_grid(QgsRasterLayer(str(template), 'Template'))
+        preset = geochem_utils.PRESETS['cao']
+        path = self.root / 'reopened.tif'
+        values = np.array([[1, 10], [10, 1]], dtype=np.int32)
+        raster_output.write_value_raster(path, values, grid, -9999, preset.metadata(),
+                                         data_type=gdal.GDT_Int32, class_ids=preset.class_ids)
+        layer = self.project.addMapLayer(QgsRasterLayer(str(path), 'Saved from a different project'))
+        self.assertIs(geochem_utils.read_class_preset(layer), preset)
+        dialog = MainDialog()
+        self.addCleanup(dialog.close)
+        self.assertEqual(dialog.layer_list.count(), 1)
+        dialog.res_spin.setValue(5)
+        expanded = values.repeat(2, axis=0).repeat(2, axis=1)
+        with patch('kigam.main.MAXENT_RESAMPLING', 1):  # Bilinear is for continuous data only.
+            for file in ('classes.tif', 'classes.asc'):
+                dest = self.root / file
+                self.export(dialog, dest)
+                result = gdal.Open(str(dest))
+                np.testing.assert_array_equal(result.ReadAsArray(), expanded)
+                if file.endswith('.tif'):
+                    self.assertEqual(result.GetRasterBand(1).DataType, gdal.GDT_Int32)
+                self.assertEqual(result.GetMetadataItem('KIGAM_VALUE_KIND'), geochem_utils.CLASS_KIND)
+                result = None
+                with raster_utils.codebook_path(dest).open(encoding='utf-8-sig', newline='') as fp:
+                    rows = list(csv.DictReader(fp))
+                self.assertEqual(rows[-1]['UPPER'], '53.07')
+                self.assertEqual(rows[-1]['UNIT'], '%')
 
     def test_geochemical_and_geological_exports_share_grid_keep_types(self):
         reference_path = self.raster('reference.tif', np.ones((3, 3)), gt=(200005, 20, 0, 500095, 0, -20))

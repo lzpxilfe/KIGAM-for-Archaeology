@@ -42,7 +42,8 @@ def scale_patterns(layer, multiplier):
     if not math.isfinite(multiplier) or not 0.5 <= multiplier <= 6:
         raise ValueError('Pattern multiplier must be between 0.5 and 6')
     report = {'changed': 0, 'skipped': 0}
-    if layer.type() != Qgis.LayerType.Vector or layer.geometryType() != Qgis.GeometryType.Polygon or not layer.renderer():
+    if (layer.type() != Qgis.LayerType.Vector or layer.geometryType() != Qgis.GeometryType.Polygon
+            or not layer.renderer()):
         return report
     try:
         previous_state = json.loads(str(layer.customProperty(STATE_KEY, '{}')))

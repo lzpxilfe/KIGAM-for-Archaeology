@@ -1,14 +1,11 @@
-# -*- coding: utf-8 -*-
-"""
-GeoChem utilities for KIGAM for Archaeology
-Ported from ArchToolkit (lzpxilfe/ar) - geochem_polygonize_dialog.py
-
-This module contains functions and data for converting WMS RGB raster
-to numerical value rasters based on legend color mapping.
-"""
+"""Classify KIGAM GeoChem WMS pixels using the observed official map palette."""
+import csv
+import math
 import os
+from pathlib import Path
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import NamedTuple
+from urllib.parse import parse_qs, urlsplit
 
 import numpy as np
 from osgeo import gdal
@@ -22,13 +19,26 @@ from qgis.core import (
     QgsRasterProjector,
 )
 from .raster_output import check_grid, close_dataset
-from .raster_utils import open_file_raster
+from .raster_utils import codebook_path, open_file_raster
 
 
-@dataclass(frozen=True)
-class LegendPoint:
-    value: float
-    rgb: Tuple[int, int, int]
+WMS_URL = 'https://data.kigam.re.kr/mgeo/geoserver/Geochemical_map/wms'
+CLASS_KIND = 'kigam_wms_legend_class'
+PALETTE_DATE = '2026-11-20'
+MIN_OPAQUE_ALPHA = 250
+PERCENTILES = (5, 10, 15, 25, 50, 75, 90, 95, 99, 100)
+
+# Exact colors observed in the official WMS GetMap PNGs on 2026-11-20.
+# The published legend illustrations have small RGB differences from the WMS.
+WMS_COLORS = (
+    0x000064, 0x0000FF, 0x0099FF, 0x00CCFF, 0x00FF00,
+    0xFFFF00, 0xF3A85B, 0xE87400, 0xFF0000, 0x850000,
+)
+ZN_WMS_COLORS = (0x000067, *WMS_COLORS[1:6], 0xF3A85D, *WMS_COLORS[7:])
+
+
+def rgb_channels(color):
+    return color >> 16, (color >> 8) & 255, color & 255
 
 
 @dataclass(frozen=True)
@@ -36,187 +46,113 @@ class GeoChemPreset:
     key: str
     label: str
     unit: str
-    points: Sequence[LegendPoint]
+    upper: tuple
+    colors: tuple = WMS_COLORS
+    absent_color: int = 0xC0C0C0
+
+    @property
+    def wms_id(self):
+        return f'L_geochemMP_{self.key.upper()}'
+
+    @property
+    def class_ids(self):
+        return range(1, len(self.upper) + 1)
+
+    def class_label(self, class_id):
+        lower = f'{self.upper[class_id - 2]:g}' if class_id > 1 else '하한 미표기'
+        return f'{class_id}등급 · {lower}–{self.upper[class_id - 1]:g} {self.unit}'
+
+    def metadata(self):
+        return {
+            'KIGAM_VALUE_KIND': CLASS_KIND,
+            'KIGAM_PRESET': self.key,
+            'KIGAM_WMS_LAYER': self.wms_id,
+            'KIGAM_PALETTE_DATE': PALETTE_DATE,
+            'KIGAM_INTERVAL_UNIT': self.unit,
+            'KIGAM_CLASS_MATCH': 'exact_rgb',
+        }
 
 
-# EXACT COPY from ArchToolkit (lzpxilfe/ar) geochem_polygonize_dialog.py lines 91-204
-FE2O3_POINTS: List[LegendPoint] = [
-    LegendPoint(0.0, (204, 204, 204)),
-    LegendPoint(3.1, (0, 38, 115)),
-    LegendPoint(3.5, (0, 112, 255)),
-    LegendPoint(3.9, (0, 197, 255)),
-    LegendPoint(4.5, (0, 255, 0)),
-    LegendPoint(5.7, (85, 255, 0)),
-    LegendPoint(7.1, (255, 255, 0)),
-    LegendPoint(8.5, (255, 170, 0)),
-    LegendPoint(9.4, (255, 85, 0)),
-    LegendPoint(12.0, (230, 0, 0)),
-    LegendPoint(51.0, (115, 12, 12)),
-]
-
-PB_POINTS: List[LegendPoint] = [
-    # Legend from percentile ramp (ppm): 5=18, 10=20, 15=21, 25=24, 50=28, 75=32, 90=36, 95=41, 99=57, 100=1363
-    LegendPoint(0.0, (204, 204, 204)),  # Absent data
-    LegendPoint(18.0, (0, 38, 115)),  # 5%
-    LegendPoint(20.0, (0, 112, 255)),  # 10%
-    LegendPoint(21.0, (0, 197, 255)),  # 15%
-    LegendPoint(24.0, (0, 255, 0)),  # 25%
-    LegendPoint(28.0, (85, 255, 0)),  # 50%
-    LegendPoint(32.0, (255, 255, 0)),  # 75%
-    LegendPoint(36.0, (255, 170, 0)),  # 90%
-    LegendPoint(41.0, (255, 85, 0)),  # 95%
-    LegendPoint(57.0, (230, 0, 0)),  # 99%
-    LegendPoint(1363.0, (115, 12, 12)),  # 100%
-]
-
-CU_POINTS: List[LegendPoint] = [
-    # Legend from percentile ramp (ppm): 5=10, 10=12, 15=14, 25=17, 50=23, 75=33, 90=45, 95=58, 99=104, 100=2104
-    LegendPoint(0.0, (204, 204, 204)),  # Absent data
-    LegendPoint(10.0, (0, 38, 115)),  # 5%
-    LegendPoint(12.0, (0, 112, 255)),  # 10%
-    LegendPoint(14.0, (0, 197, 255)),  # 15%
-    LegendPoint(17.0, (0, 255, 0)),  # 25%
-    LegendPoint(23.0, (85, 255, 0)),  # 50%
-    LegendPoint(33.0, (255, 255, 0)),  # 75%
-    LegendPoint(45.0, (255, 170, 0)),  # 90%
-    LegendPoint(58.0, (255, 85, 0)),  # 95%
-    LegendPoint(104.0, (230, 0, 0)),  # 99%
-    LegendPoint(2104.0, (115, 12, 12)),  # 100%
-]
-
-ZN_POINTS: List[LegendPoint] = [
-    # Legend from percentile ramp (ppm): 5=45, 10=57, 15=66, 25=79, 50=107, 75=149, 90=212, 95=272, 99=542, 100=21100
-    LegendPoint(0.0, (204, 204, 204)),  # Absent data
-    LegendPoint(45.0, (0, 38, 115)),  # 5%
-    LegendPoint(57.0, (0, 112, 255)),  # 10%
-    LegendPoint(66.0, (0, 197, 255)),  # 15%
-    LegendPoint(79.0, (0, 255, 0)),  # 25%
-    LegendPoint(107.0, (85, 255, 0)),  # 50%
-    LegendPoint(149.0, (255, 255, 0)),  # 75%
-    LegendPoint(212.0, (255, 170, 0)),  # 90%
-    LegendPoint(272.0, (255, 85, 0)),  # 95%
-    LegendPoint(542.0, (230, 0, 0)),  # 99%
-    LegendPoint(21100.0, (115, 12, 12)),  # 100%
-]
-
-SR_POINTS: List[LegendPoint] = [
-    # Legend from percentile ramp (ppm): 5=57, 10=72, 15=83, 25=99, 50=135, 75=192, 90=275, 95=342, 99=496, 100=3645
-    LegendPoint(0.0, (204, 204, 204)),  # Absent data
-    LegendPoint(57.0, (0, 38, 115)),  # 5%
-    LegendPoint(72.0, (0, 112, 255)),  # 10%
-    LegendPoint(83.0, (0, 197, 255)),  # 15%
-    LegendPoint(99.0, (0, 255, 0)),  # 25%
-    LegendPoint(135.0, (85, 255, 0)),  # 50%
-    LegendPoint(192.0, (255, 255, 0)),  # 75%
-    LegendPoint(275.0, (255, 170, 0)),  # 90%
-    LegendPoint(342.0, (255, 85, 0)),  # 95%
-    LegendPoint(496.0, (230, 0, 0)),  # 99%
-    LegendPoint(3645.0, (115, 12, 12)),  # 100%
-]
-
-BA_POINTS: List[LegendPoint] = [
-    # Legend from percentile ramp (ppm): 5=734, 10=853, 15=935, 25=1050, 50=1268, 75=1507, 90=1752, 95=1920, 99=2362, 100=15840
-    LegendPoint(0.0, (204, 204, 204)),  # Absent data
-    LegendPoint(734.0, (0, 38, 115)),  # 5%
-    LegendPoint(853.0, (0, 112, 255)),  # 10%
-    LegendPoint(935.0, (0, 197, 255)),  # 15%
-    LegendPoint(1050.0, (0, 255, 0)),  # 25%
-    LegendPoint(1268.0, (85, 255, 0)),  # 50%
-    LegendPoint(1507.0, (255, 255, 0)),  # 75%
-    LegendPoint(1752.0, (255, 170, 0)),  # 90%
-    LegendPoint(1920.0, (255, 85, 0)),  # 95%
-    LegendPoint(2362.0, (230, 0, 0)),  # 99%
-    LegendPoint(15840.0, (115, 12, 12)),  # 100%
-]
-
-CAO_POINTS: List[LegendPoint] = [
-    # Legend from percentile ramp (%): 5=0.40, 10=0.50, 15=0.58, 25=0.73, 50=1.18, 75=1.90, 90=2.99, 95=4.05, 99=9.03, 100=53.07
-    LegendPoint(0.0, (204, 204, 204)),  # Absent data
-    LegendPoint(0.40, (0, 38, 115)),  # 5%
-    LegendPoint(0.50, (0, 112, 255)),  # 10%
-    LegendPoint(0.58, (0, 197, 255)),  # 15%
-    LegendPoint(0.73, (0, 255, 0)),  # 25%
-    LegendPoint(1.18, (85, 255, 0)),  # 50%
-    LegendPoint(1.90, (255, 255, 0)),  # 75%
-    LegendPoint(2.99, (255, 170, 0)),  # 90%
-    LegendPoint(4.05, (255, 85, 0)),  # 95%
-    LegendPoint(9.03, (230, 0, 0)),  # 99%
-    LegendPoint(53.07, (115, 12, 12)),  # 100%
-]
-
-PRESETS: Dict[str, GeoChemPreset] = {
-    "fe2o3": GeoChemPreset(key="fe2o3", label="Fe2O3 (산화철)", unit="%", points=FE2O3_POINTS),
-    "pb": GeoChemPreset(key="pb", label="Pb (납)", unit="ppm", points=PB_POINTS),
-    "cu": GeoChemPreset(key="cu", label="Cu (구리)", unit="ppm", points=CU_POINTS),
-    "zn": GeoChemPreset(key="zn", label="Zn (아연)", unit="ppm", points=ZN_POINTS),
-    "sr": GeoChemPreset(key="sr", label="Sr (스트론튬)", unit="ppm", points=SR_POINTS),
-    "ba": GeoChemPreset(key="ba", label="Ba (바륨)", unit="ppm", points=BA_POINTS),
-    "cao": GeoChemPreset(key="cao", label="CaO (칼슘)", unit="%", points=CAO_POINTS),
-}
+PRESETS = {preset.key: preset for preset in (
+    GeoChemPreset('fe2o3', 'Fe₂O₃ (철)', '%', (3.1, 3.5, 3.9, 4.5, 5.7, 7.1, 8.5, 9.4, 12, 51)),
+    GeoChemPreset('pb', 'Pb (납)', 'ppm', (18, 20, 21, 24, 28, 32, 36, 41, 57, 1363)),
+    GeoChemPreset('cu', 'Cu (구리)', 'ppm', (10, 12, 14, 17, 23, 33, 45, 58, 104, 2104)),
+    GeoChemPreset('zn', 'Zn (아연)', 'ppm', (45, 57, 66, 79, 107, 149, 212, 272, 542, 21100),
+                  ZN_WMS_COLORS, 0xC0C0C6),
+    GeoChemPreset('sr', 'Sr (스트론튬)', 'ppm', (57, 72, 83, 99, 135, 192, 275, 342, 496, 3645)),
+    GeoChemPreset('ba', 'Ba (바륨)', 'ppm', (734, 853, 935, 1050, 1268, 1507, 1752, 1920, 2362, 15840)),
+    GeoChemPreset('cao', 'CaO (칼슘)', '%', (0.40, 0.50, 0.58, 0.73, 1.18, 1.90, 2.99, 4.05, 9.03, 53.07)),
+)}
+_WMS_PRESETS = {preset.wms_id.casefold(): preset for preset in PRESETS.values()}
 
 
-RGB_MATCH_TOLERANCE = 48.0
-MIN_OPAQUE_ALPHA = 250
-ABSENT_STOP = LegendPoint(0.0, (204, 204, 204))
+def _wms_layers(parameters):
+    return [layer.rsplit(':', 1)[-1].casefold()
+            for endpoint in parameters.get('layers', []) for layer in endpoint.split(',')]
 
 
-def interp_rgb_to_value(
-    *,
-    r: np.ndarray,
-    g: np.ndarray,
-    b: np.ndarray,
-    points: Sequence[LegendPoint],
-    max_distance: Optional[float] = None,
-) -> np.ndarray:
-    """Vectorized mapping: RGB -> scalar value by projecting to the nearest legend polyline segment in RGB space.
+def wms_preset(uri):
+    layers = _wms_layers(parse_qs(uri, keep_blank_values=True))
+    return _WMS_PRESETS.get(layers[0]) if len(layers) == 1 else None
 
-    Adapted from ArchToolkit's geochem_legend.py.
-    """
-    if r.shape != g.shape or r.shape != b.shape:
-        raise ValueError("RGB bands must have the same shape")
-    if len(points) < 2:
-        raise ValueError("Need at least 2 legend points")
 
-    rr = r.astype(np.float32, copy=False)
-    gg = g.astype(np.float32, copy=False)
-    bb = b.astype(np.float32, copy=False)
+def validate_wms_preset(uri, preset):
+    parameters = parse_qs(uri, keep_blank_values=True)
+    source = urlsplit(parameters.get('url', [''])[0])
+    official = (source.hostname == 'data.kigam.re.kr'
+                and '/geoserver/geochemical_map/' in source.path.casefold())
+    layers = _wms_layers(parameters)
+    known = [name for name in layers if name in _WMS_PRESETS]
+    if not official and not known:
+        return
+    if len(layers) != 1 or len(known) != 1:
+        raise ValueError('KIGAM 다목적 지구화학도에서 지원 원소 레이어 하나만 추가하세요.')
+    if known[0] != preset.wms_id.casefold():
+        actual = _WMS_PRESETS[known[0]]
+        raise ValueError(f'선택한 WMS는 {actual.label}입니다. 원소 프리셋을 맞춰 주세요.')
+    styles = parameters.get('styles', [''])
+    if len(styles) != 1 or styles[0].rsplit(':', 1)[-1].casefold() not in ('', 'raster'):
+        raise ValueError('KIGAM WMS의 기본 raster 스타일을 사용하세요.')
+    if parameters.get('format', [''])[0].casefold() != 'image/png':
+        raise ValueError('등급 색상을 보존하려면 WMS 이미지 형식으로 PNG를 선택하세요.')
 
-    out = np.full(rr.shape, np.nan, dtype=np.float32)
-    min_dist = np.full(rr.shape, np.float32(np.inf), dtype=np.float32)
 
-    for start, end in zip(points, points[1:]):
-        c1r, c1g, c1b = map(np.float32, start.rgb)
-        if start == ABSENT_STOP:
-            # The grey swatch is a discrete background color.
-            dist_sq = (rr - c1r) ** 2 + (gg - c1g) ** 2 + (bb - c1b) ** 2
-            mask = dist_sq < min_dist
-            out[mask] = ABSENT_STOP.value
-            min_dist[mask] = dist_sq[mask]
-            continue
-        vr, vg, vb = [np.float32(right - left) for left, right in zip(start.rgb, end.rgb)]
-        v_len_sq = np.float32(vr * vr + vg * vg + vb * vb)
-        if v_len_sq <= 0:
-            continue
+def write_class_codebook(path, preset):
+    target = codebook_path(path)
+    with target.open('w', encoding='utf-8-sig', newline='') as fp:
+        writer = csv.writer(fp)
+        writer.writerow(('KIGAM_ID', 'PERCENTILE_FROM', 'PERCENTILE_TO', 'LOWER', 'UPPER', 'UNIT', 'WMS_HEX'))
+        for i, (upper, color) in enumerate(zip(preset.upper, preset.colors)):
+            writer.writerow((i + 1, PERCENTILES[i - 1] if i else '', PERCENTILES[i],
+                             preset.upper[i - 1] if i else '', upper, preset.unit, f'#{color:06X}'))
+    return target
 
-        t = ((rr - c1r) * vr + (gg - c1g) * vg + (bb - c1b) * vb) / v_len_sq
-        np.clip(t, np.float32(0.0), np.float32(1.0), out=t)
-        pr = c1r + t * vr
-        pg = c1g + t * vg
-        pb = c1b + t * vb
-        dist_sq = (rr - pr) ** 2 + (gg - pg) ** 2 + (bb - pb) ** 2
 
-        mask = dist_sq < min_dist
-        if not np.any(mask):
-            continue
+def read_class_preset(layer):
+    """Identify class GeoTIFFs and ASCs reopened from disk."""
+    if (layer.providerType() != 'gdal' or layer.bandCount() != 1
+            or not Path(layer.source()).is_file()):
+        return None
+    dataset = open_file_raster(layer)
+    if dataset is None:
+        return None
+    try:
+        if dataset.GetMetadataItem('KIGAM_VALUE_KIND') != CLASS_KIND:
+            return None
+        preset = PRESETS.get(dataset.GetMetadataItem('KIGAM_PRESET'))
+        if preset is None or dataset.GetMetadataItem('KIGAM_PALETTE_DATE') != PALETTE_DATE:
+            raise ValueError('이 지구화학 등급 래스터의 원소 또는 범례 버전을 확인할 수 없습니다.')
+        return preset
+    finally:
+        close_dataset(dataset)
 
-        base = np.float32(start.value)
-        delta = np.float32(end.value - start.value)
-        out[mask] = base + t[mask].astype(np.float32, copy=False) * delta
-        min_dist[mask] = dist_sq[mask].astype(np.float32, copy=False)
 
-    if max_distance is not None:
-        out[min_dist > max_distance ** 2] = np.nan
-    return out
+class RGBInput(NamedTuple):
+    r: np.ndarray
+    g: np.ndarray
+    b: np.ndarray
+    coverage: np.ndarray
+    opaque: np.ndarray
 
 
 def mask_black_lines(r: np.ndarray, g: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -237,9 +173,9 @@ def _neighbor_slices(shape, dy, dx):
     return center, neighbor
 
 
-def mask_linework(r, g, b, available, matched, points):
+def mask_linework(r, g, b, available, matched):
     """Find dark line cores and their antialiased blends with adjacent colors."""
-    core = available & mask_black_lines(r, g, b)
+    core = available & ~matched & mask_black_lines(r, g, b)
     region = core.copy()
     if not core.any():
         return region
@@ -249,14 +185,11 @@ def mask_linework(r, g, b, available, matched, points):
         near_line = np.zeros_like(core)
         for center, neighbor in pairs:
             near_line[center] |= region[neighbor]
-        ys, xs = np.nonzero(near_line & available & ~region)
+        ys, xs = np.nonzero(near_line & available & ~region & ~matched)
         if not ys.size:
             break
         colors = np.column_stack([c[ys, xs] for c in channels]).astype(np.float32)
-        protected = np.zeros(ys.size, dtype=bool)
-        for point in points:
-            protected |= np.sum((colors - np.asarray(point.rgb, dtype=np.float32)) ** 2, axis=1) <= 100
-        blend = np.zeros_like(protected)
+        blend = np.zeros(ys.size, dtype=bool)
         height, width = core.shape
         for dy, dx in _NEIGHBORS:
             yy, xx = ys + dy, xs + dx
@@ -267,51 +200,88 @@ def mask_linework(r, g, b, available, matched, points):
             error = ((colors - donor * scale[:, None]) ** 2).sum(axis=1)
             blend |= (inside & matched[yy, xx] & ~region[yy, xx]
                       & (scale >= 0.08) & (scale <= 0.92) & (error <= 16 ** 2))
-        keep = blend & ~protected
-        if not keep.any():
+        if not blend.any():
             break
-        region[ys[keep], xs[keep]] = True
+        region[ys[blend], xs[blend]] = True
     return region
 
 
+def _line_depth(line_mask, valid, dy, dx, limit):
+    """Measure distance through linework to the first original class in one direction."""
+    depth = np.zeros(line_mask.shape, dtype=np.int32)
+    center, neighbor = _neighbor_slices(line_mask.shape, dy, dx)
+    rows, cols = np.nonzero(line_mask[center] & valid[neighbor])
+    rows += center[0].start
+    cols += center[1].start
+    height, width = line_mask.shape
+    for step in range(1, limit + 1):
+        if not rows.size:
+            break
+        depth[rows, cols] = step
+        rows, cols = rows - dy, cols - dx
+        inside = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
+        rows, cols = rows[inside], cols[inside]
+        continuing = line_mask[rows, cols]
+        rows, cols = rows[continuing], cols[continuing]
+    return depth
+
+
 def fill_linework(values, line_mask, nodata, max_distance):
-    """Copy neighboring values across linework without synthesizing averages."""
+    """Bridge bounded gaps from original classes on opposite sides of linework."""
     result = values.copy()
     result[line_mask | ~np.isfinite(result)] = nodata
-    todo = line_mask.copy()
-    pairs = [_neighbor_slices(todo.shape, dy, dx) for dy, dx in _NEIGHBORS]
-    for _ in range(max_distance):
-        if not todo.any():
-            break
-        filled = np.zeros_like(todo)
-        previous = result.copy()
-        for center, neighbor in pairs:
-            take = todo[center] & ~filled[center] & ~todo[neighbor]
-            result[center][take] = previous[neighbor][take]
-            filled[center] |= take
-        if not filled.any():
-            break
-        todo &= ~filled
+    valid = result != nodata
+    if max_distance <= 0 or not line_mask.any() or not valid.any():
+        return result
+
+    best_width = np.full(result.shape, np.inf, dtype=np.float32)
+    best_agreement = np.zeros(result.shape, dtype=bool)
+    for dy, dx in ((0, 1), (1, 0), (1, 1), (1, -1)):
+        forward = _line_depth(line_mask, valid, dy, dx, max_distance)
+        backward = _line_depth(line_mask, valid, -dy, -dx, max_distance)
+        rows, cols = np.nonzero((forward > 0) & (backward > 0))
+        after, before = forward[rows, cols], backward[rows, cols]
+        widths = ((after + before - 1) * math.hypot(dy, dx)).astype(np.float32)
+        eligible = widths <= max_distance
+        rows, cols = rows[eligible], cols[eligible]
+        after, before, widths = after[eligible], before[eligible], widths[eligible]
+        first = values[rows - before * dy, cols - before * dx]
+        second = values[rows + after * dy, cols + after * dx]
+        agreement = first == second
+        current = best_width[rows, cols]
+        take = (widths < current) | ((widths == current) & agreement & ~best_agreement[rows, cols])
+        rows, cols = rows[take], cols[take]
+        best_width[rows, cols] = widths[take]
+        best_agreement[rows, cols] = agreement[take]
+        result[rows, cols] = np.where(before[take] <= after[take], first[take], second[take])
     return result
 
 
-def convert_rgb(r, g, b, points, available, nodata, fill_distance=0):
-    values = interp_rgb_to_value(r=r, g=g, b=b, points=points, max_distance=RGB_MATCH_TOLERANCE)
-    background = ((r == 255) & (g == 255) & (b == 255))
-    if points[0] == ABSENT_STOP:
-        background |= values == ABSENT_STOP.value
-    available = available & ~background
-    matched = available & np.isfinite(values)
-    linework = mask_linework(r, g, b, available, matched, points)
-    values[~matched | linework] = nodata
+def classify_rgb(rgb, preset, nodata, fill_distance=0):
+    """Keep only observed class RGBs and report disjoint NoData reasons."""
+    r, g, b, coverage, opaque = rgb
+    packed = (r.astype(np.uint32) << 16) | (g.astype(np.uint32) << 8) | b
+    visible = coverage & opaque
+    absent = visible & (packed == preset.absent_color)
+    white = visible & (packed == 0xFFFFFF)
+    eligible = visible & ~absent & ~white
+    classes = np.full(packed.shape, nodata, dtype=np.int32)
+    for class_id, color in enumerate(preset.colors, 1):
+        classes[eligible & (packed == color)] = class_id
+    matched = classes != nodata
+    linework = mask_linework(r, g, b, eligible, matched)
     if fill_distance > 0:
-        values = fill_linework(values, linework, nodata, fill_distance)
-    return values, {
-        'available_pixels': int(np.count_nonzero(available & ~linework)),
-        'off_legend_pixels': int(np.count_nonzero(available & ~matched & ~linework)),
+        classes = fill_linework(classes, linework, nodata, fill_distance)
+    return classes, {
+        'source_masked_pixels': int(np.count_nonzero(~coverage)),
+        'alpha_masked_pixels': int(np.count_nonzero(coverage & ~opaque)),
+        'absent_pixels': int(np.count_nonzero(absent)),
+        'white_pixels': int(np.count_nonzero(white)),
+        'available_pixels': int(np.count_nonzero(eligible & ~linework)),
+        'off_legend_pixels': int(np.count_nonzero(eligible & ~matched & ~linework)),
         'linework_pixels': int(np.count_nonzero(linework)),
-        'filled_pixels': int(np.count_nonzero(linework & (values != nodata))),
-        'valid_pixels': int(np.count_nonzero(values != nodata)),
+        'filled_pixels': int(np.count_nonzero(linework & (classes != nodata))),
+        'valid_pixels': int(np.count_nonzero(classes != nodata)),
     }
 
 
@@ -361,20 +331,21 @@ def read_rgb(path, grid, has_alpha):
                 if coverage is None:
                     raise RuntimeError('RGB 유효 범위를 읽을 수 없습니다.')
                 available &= coverage != 0
+        opaque = np.ones_like(available)
         if has_alpha:
             band = dataset.GetRasterBand(4) if dataset.RasterCount >= 4 else None
             alpha = band.ReadAsArray() if band is not None else None
             if alpha is None or band.DataType != gdal.GDT_Byte:
                 raise RuntimeError('RGB 변환 중 알파 밴드가 누락되었습니다.')
-            available &= alpha >= MIN_OPAQUE_ALPHA
-        return (*channels, available)
+            opaque = alpha >= MIN_OPAQUE_ALPHA
+        return RGBInput(*channels, available, opaque)
     finally:
         band = None
         close_dataset(dataset)
 
 
 def export_geotiff(layer: QgsRasterLayer, path: str, extent: QgsRectangle, width: int, height: int,
-                  target_crs=None) -> bool:
+                   target_crs=None) -> bool:
     """
     Export a raster layer (including WMS) to a GeoTIFF.
     Uses QgsRasterFileWriter, falls back to GDAL warp if needed.

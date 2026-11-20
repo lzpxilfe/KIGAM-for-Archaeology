@@ -98,10 +98,10 @@ def close_dataset(dataset):
         _check_gdal_result(close())
 
 
-def write_value_raster(path, values, grid, nodata, metadata):
+def write_value_raster(path, values, grid, nodata, metadata, *, data_type=gdal.GDT_Float32, class_ids=None):
     gdal.ErrorReset()
     dataset = gdal.GetDriverByName('GTiff').Create(
-        str(path), grid.width, grid.height, 1, gdal.GDT_Float32,
+        str(path), grid.width, grid.height, 1, data_type,
         ['TILED=YES', 'COMPRESS=LZW'])
     if dataset is None:
         raise RuntimeError('출력 GeoTIFF를 만들 수 없습니다.')
@@ -121,7 +121,7 @@ def write_value_raster(path, values, grid, nodata, metadata):
         dataset = None
     if gdal.GetLastErrorType() >= gdal.CE_Failure:
         raise RuntimeError(gdal.GetLastErrorMsg() or 'GeoTIFF 쓰기에 실패했습니다.')
-    verify_raster(path, grid, nodata, gdal.GDT_Float32)
+    verify_raster(path, grid, nodata, data_type, class_ids=class_ids)
 
 
 def staging_directory(destination):

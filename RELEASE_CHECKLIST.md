@@ -1,3 +1,17 @@
+# 0.1.6 업로드 준비
+
+- [x] 2026-11-20에 KIGAM 다목적 지구화학도 WMS의 7개 레이어 ID, 기본 스타일, 공개 PNG 응답과 공식 범례 이미지 주소를 확인했습니다.
+- [x] Windows QGIS 3.40.3에서 KIGAM WMS 7개를 불러와 동일한 시험 범위에서 재투영했습니다. 원소별로 RGBA를 읽고 1~10등급을 모두 포함하는 GeoTIFF와 구간 CSV 저장을 확인했습니다.
+- [x] 같은 WMS 표본 7개에서 보간 전후를 비교했습니다. 검은 경계선으로 판정한 셀에만 원본 등급을 채웠고 기존 등급과 회색 무자료, 흰색 및 투명 배경을 보존했습니다.
+- [x] 회귀 테스트로 7종의 등급 색 70개와 CSV 경계값 70개, 원소·스타일 검증, NoData 사유 분리, 재내보내기 시 최근접 등급 보존을 확인합니다.
+- [x] 실제 1:50,000 지질도 ZIP 4개에서 37개 레이어를 불러오고, 지질 분류 GeoTIFF와 대응 CSV를 저장했습니다. README 시연은 실제 도엽과 WMS의 일부를 표시하며 지명, 좌표, 도엽명과 파일 경로를 가렸습니다.
+- 배포 ZIP은 QGIS 3.40 및 4.x의 새 프로필에서 설치와 활성화를 확인합니다. 검증에는 소스 및 설치 ZIP 회귀 테스트, Qt6 호환성 검사와 로컬 Bandit, detect-secrets, Flake8 및 ZIP 구조 검사를 사용합니다.
+- [ ] QGIS 플러그인 저장소 업로드 후 서버 검사 결과와 승인 상태를 확인합니다.
+
+[공식 WMS 메타데이터](https://data.kigam.re.kr/mgeo/geoserver/Geochemical_map/wms?service=WMS&request=GetCapabilities&version=1.3.0)
+
+---
+
 # 0.1.6 release validation
 
 - [x] Run all 52 regression tests on Windows with QGIS 3.40.3 / Qt 5 and QGIS 4.2.3 / Qt 6, against both the source tree and the extracted installation ZIP.
@@ -14,7 +28,7 @@ Release date: 2026-10-21. Changes are based on main commit `3877927`.
 
 ## Verified locally
 - [x] QGIS 3.40.5 / Qt5 / Python 3.12 on Windows: regression suite (36 tests) passes.
-- [x] Actual user KIGAM ZIP (`수치지질도_5만축척_GF02_공주.zip`): all 10 Shapefiles loaded with QML styles and symbol path relinking without `charmap` encode errors.
+- [x] Actual user-supplied 1:50,000 KIGAM ZIP: all 10 Shapefiles loaded with QML styles and symbol path relinking without `charmap` encode errors.
 - [x] Pre-decoded unicode filename handling without UTF-8 flag (0x7075 Info-ZIP extra field) test added and verified.
 - [x] Version and release date recorded in `metadata.txt`, `CHANGELOG.md`, `CITATION.cff`, `README.md`.
 

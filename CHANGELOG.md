@@ -8,10 +8,21 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## 0.1.6
 
+### GeoChem and documentation
+
+- Convert the seven KIGAM GeoChem WMS palettes to ten legend classes using exact RGB matches. Store concentration intervals in the class CSV and leave the undocumented lowest bound blank.
+- Recognize the supported WMS layer IDs and validate the selected element, PNG format and default raster style. Keep the class IDs and CSV during GeoTIFF and ASCII Grid export.
+- Report separate counts for source masks, transparency, grey absent data, white background, linework and unclassified colors.
+- Add optional black-line interpolation across narrow gaps bounded by original classes on both sides. Keep original class IDs and report the filled cell count.
+- Keep Shapefile layers with otherwise valid UTF-8 attributes when a DBF field ends mid-character. Report the source truncation.
+- Document the public GeoChem WMS connection in QGIS and link to each official legend.
+- Add Korean in-app help for ZIP import, WMS connection, legend classes, interpolation, and shared-grid export. The WMS help includes a copyable service URL.
+- Add a README workflow animation using actual KIGAM inputs and open Copernicus relief, with geographic labels and source paths hidden.
+
 ### Fixed
 
-- Preserve fractional GeoChem estimates through GeoTIFF and ASCII Grid export. Geology outputs retain integer class IDs.
-- Reject off-legend colors and invalid RGB inputs, preserve transparency and the lowest valid legend interval, and record the rules and pixel counts in the GeoTIFF. Optional linework filling copies an adjacent estimate and reports how many pixels were filled.
+- Keep integer geology class IDs during export. Preserve fractional values when re-exporting legacy GeoChem outputs.
+- Validate RGB inputs and preserve transparency and the lowest valid legend class.
 - Verify the written CRS, grid, data type, NoData and presence of data before publishing. Restore previous output files if replacement fails.
 - Name codebooks after the complete raster filename, so GeoTIFF and ASCII Grid exports with the same stem keep independent codebooks.
 - Apply only symbology and labeling from sidecar QML. Prefer an existing image path inside the archive to a filename match.
@@ -25,8 +36,8 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - **ZIP extraction UnicodeEncodeError on Windows / Python 3.12+**:
-  When extracting ZIP archives where Info-ZIP Unicode Path extra field (`0x7075`) is present, Python's `zipfile` module pre-decodes Korean member names (e.g. `GF02_Geology_50K_공주.qgz`, `sym/광산.png`) into unicode strings. Attempting to encode these names with `cp437` previously threw `UnicodeEncodeError: 'charmap' codec can't encode characters in position ...` and caused extraction of the entire archive to abort. Added exception handling in `member_name` to retain already-decoded unicode filenames.
-- Validated loading with actual KIGAM 1:50,000 sheet package (`수치지질도_5만축척_GF02_공주.zip`).
+  When extracting ZIP archives where the Info-ZIP Unicode Path extra field (`0x7075`) is present, Python's `zipfile` module pre-decodes Korean member names into Unicode strings. Encoding those names with `cp437` previously raised `UnicodeEncodeError` and aborted extraction. `member_name` now keeps already-decoded filenames.
+- Validated loading an actual KIGAM 1:50,000 sheet package.
 
 ---
 

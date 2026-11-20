@@ -4,6 +4,9 @@ import struct
 from pathlib import Path
 
 
+TRUNCATED_UTF8_REASON = 'UTF-8 text truncated at the end of a DBF field'
+
+
 def sidecar(path, suffix):
     path = Path(path)
     expected = (path.stem + suffix).casefold()
@@ -60,6 +63,20 @@ def dbf_samples(path, limit=256):
         return samples
 
 
+def _has_truncated_utf8(samples):
+    has_truncation = has_multibyte_text = False
+    for sample in samples:
+        try:
+            value = sample.decode('utf-8')
+        except UnicodeDecodeError as exc:
+            if exc.reason != 'unexpected end of data' or exc.end != len(sample):
+                return False
+            value = sample[:exc.start].decode('utf-8')
+            has_truncation = True
+        has_multibyte_text |= not value.isascii()
+    return has_truncation and has_multibyte_text
+
+
 def detect_dbf_encoding(shp_path, override=None, candidates=None):
     """Return (encoding, reason). A manual override resolves ambiguous legacy data."""
     if override:
@@ -102,4 +119,6 @@ def detect_dbf_encoding(shp_path, override=None, candidates=None):
         encoding = canonical_encoding(candidate) if candidate else None
         if encoding not in ('utf-8', 'cp949', 'euc_kr') and valid(encoding):
             return encoding, 'configured encoding validated against DBF sample' + warning
+    if _has_truncated_utf8(samples):
+        return 'utf-8', TRUNCATED_UTF8_REASON + warning
     raise ValueError('DBF is not valid UTF-8/CP949; select its encoding explicitly or inspect the source')

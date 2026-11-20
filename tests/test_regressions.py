@@ -1,6 +1,7 @@
 import csv
 import io
 from pathlib import Path
+import struct
 import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
@@ -93,6 +94,26 @@ class RegressionTests(unittest.TestCase):
         layer, encoding, *_ = self.processor._load_layer_with_best_encoding(str(shp), 'test')
         self.assertEqual(encoding, 'utf-8')
         self.assertEqual(next(layer.getFeatures())['LITHONAME'], '화강암 퇴적층 똠')
+
+    def test_truncated_utf8_field_keeps_layer_and_reports_damage(self):
+        text = '화강암 퇴적층 똠'
+        shp = shapefile(self.root, encoding='UTF-8', cpg=False, text=text)
+        dbf = shp.with_suffix('.dbf')
+        data = bytearray(dbf.read_bytes())
+        start = struct.unpack_from('<H', data, 8)[0] + 1
+        data[start + len(text.encode()) - 1] = 0x20
+        dbf.write_bytes(data)
+        layer, encoding, *_ = self.processor._load_layer_with_best_encoding(str(shp), 'test')
+        self.assertEqual(encoding, 'utf-8')
+        self.assertTrue(layer.isValid())
+        self.assertEqual(layer.featureCount(), 1)
+        self.assertIn('truncated', self.processor.last_report['warnings'][0])
+
+        del layer
+        data[start] = 0xFF  # Interior corruption still fails detection.
+        dbf.write_bytes(data)
+        with self.assertRaises(ValueError):
+            detect_dbf_encoding(shp)
 
     def test_numeric_cpg_alias_and_wrong_cpg(self):
         shp = shapefile(self.root)
@@ -234,11 +255,37 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(result[2, 2], -9999)
         self.assertEqual(result[1, 1], 10)
 
-    def test_legend_anchors(self):
-        for preset in geochem_utils.PRESETS.values():
-            rgb = np.array([p.rgb for p in preset.points], dtype=np.uint8)
-            result = geochem_utils.interp_rgb_to_value(r=rgb[:, 0], g=rgb[:, 1], b=rgb[:, 2], points=preset.points)
-            np.testing.assert_allclose(result, [p.value for p in preset.points], rtol=1e-5)
+    def test_official_legend_classes_and_csv_ranges(self):
+        colors = (0x000064, 0x0000FF, 0x0099FF, 0x00CCFF, 0x00FF00,
+                  0xFFFF00, 0xF3A85B, 0xE87400, 0xFF0000, 0x850000)
+        bounds = {
+            'fe2o3': ('%', (3.1, 3.5, 3.9, 4.5, 5.7, 7.1, 8.5, 9.4, 12, 51)),
+            'pb': ('ppm', (18, 20, 21, 24, 28, 32, 36, 41, 57, 1363)),
+            'cu': ('ppm', (10, 12, 14, 17, 23, 33, 45, 58, 104, 2104)),
+            'zn': ('ppm', (45, 57, 66, 79, 107, 149, 212, 272, 542, 21100)),
+            'sr': ('ppm', (57, 72, 83, 99, 135, 192, 275, 342, 496, 3645)),
+            'ba': ('ppm', (734, 853, 935, 1050, 1268, 1507, 1752, 1920, 2362, 15840)),
+            'cao': ('%', (0.40, 0.50, 0.58, 0.73, 1.18, 1.90, 2.99, 4.05, 9.03, 53.07)),
+        }
+        for key, (unit, upper) in bounds.items():
+            with self.subTest(key=key):
+                palette = (0x000067, *colors[1:6], 0xF3A85D, *colors[7:]) if key == 'zn' else colors
+                absent = 0xC0C0C6 if key == 'zn' else 0xC0C0C0
+                channels = np.array([[geochem_utils.rgb_channels(c) for c in (*palette, absent)]], dtype=np.uint8)
+                visible = np.ones((1, 11), dtype=bool)
+                rgb = geochem_utils.RGBInput(*np.moveaxis(channels, -1, 0), visible, visible)
+                preset = geochem_utils.PRESETS[key]
+                result, stats = geochem_utils.classify_rgb(rgb, preset, -9999)
+                np.testing.assert_array_equal(result, [[*range(1, 11), -9999]])
+                self.assertEqual(stats['absent_pixels'], 1)
+                codebook = geochem_utils.write_class_codebook(self.root / f'{key}.tif', preset)
+                with codebook.open(encoding='utf-8-sig', newline='') as fp:
+                    rows = list(csv.DictReader(fp))
+                self.assertEqual([float(row['UPPER']) for row in rows], list(upper))
+                self.assertEqual(rows[0]['LOWER'], '')
+                self.assertEqual(rows[0]['PERCENTILE_FROM'], '')
+                self.assertEqual({row['UNIT'] for row in rows}, {unit})
+                self.assertEqual([row['WMS_HEX'] for row in rows], [f'#{color:06X}' for color in palette])
 
     def test_categorical_export_tif_and_asc(self):
         import processing
@@ -331,9 +378,12 @@ class RegressionTests(unittest.TestCase):
             self.assertFalse(warnings.called, warnings.call_args)
         ds = gdal.Open(str(output))
         self.assertIsNotNone(ds)
-        self.assertAlmostEqual(ds.ReadAsArray()[0, 0], 4.5)
+        self.assertEqual(ds.ReadAsArray()[0, 0], 5)
         self.assertEqual(ds.ReadAsArray()[4, 4], -9999)
-        self.assertEqual(ds.GetMetadataItem('KIGAM_VALUE_KIND'), 'legend_color_estimate')
+        self.assertEqual(ds.GetRasterBand(1).DataType, gdal.GDT_Int32)
+        self.assertEqual(ds.GetMetadataItem('KIGAM_VALUE_KIND'), geochem_utils.CLASS_KIND)
+        self.assertEqual(ds.GetMetadataItem('KIGAM_ALPHA_MASKED_PIXELS'), '1')
+        self.assertTrue(raster_utils.codebook_path(output).is_file())
         ds = None
         self.assertTrue(dialog.geochem_btn.isEnabled())
         dialog.close()

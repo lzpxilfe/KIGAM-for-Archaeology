@@ -7,7 +7,7 @@ import shutil
 import unicodedata
 from pathlib import Path
 from .archive_utils import extract_archive
-from .encoding_utils import detect_dbf_encoding, sidecar
+from .encoding_utils import TRUNCATED_UTF8_REASON, detect_dbf_encoding, sidecar
 from .pattern_utils import scale_patterns
 from .defusedxml import ElementTree as ET
 from .plugin_config import PLUGIN_CONFIG, DEFAULT_PLUGIN_CONFIG
@@ -36,7 +36,8 @@ DEFAULT_UI_CONFIG = DEFAULT_PLUGIN_CONFIG.get("ui", {})
 DEFAULT_LABEL_FONT_CONFIG = DEFAULT_UI_CONFIG.get("label_font", {})
 
 SYMBOL_PRIORITY_FIELDS = [
-    str(v).strip() for v in ZIP_CONFIG.get("symbol_priority_fields", DEFAULT_ZIP_CONFIG.get("symbol_priority_fields", []))
+    str(v).strip()
+    for v in ZIP_CONFIG.get("symbol_priority_fields", DEFAULT_ZIP_CONFIG.get("symbol_priority_fields", []))
     if isinstance(v, str) and str(v).strip()
 ] or list(DEFAULT_ZIP_CONFIG.get("symbol_priority_fields", []))
 
@@ -81,7 +82,8 @@ LITHO_LAYER_KEYWORD = str(
         "litho_layer_keyword", "litho"))
 ).strip().lower() or "litho"
 LABEL_FIELD_CANDIDATES = [
-    str(v).strip() for v in ZIP_CONFIG.get("label_field_candidates", DEFAULT_ZIP_CONFIG.get("label_field_candidates", []))
+    str(v).strip()
+    for v in ZIP_CONFIG.get("label_field_candidates", DEFAULT_ZIP_CONFIG.get("label_field_candidates", []))
     if isinstance(v, str) and str(v).strip()
 ]
 if not LABEL_FIELD_CANDIDATES:
@@ -395,7 +397,7 @@ class ZipProcessor:
         layer.setProviderEncoding(encoding)
         layer.setCustomProperty('kigam/encoding', encoding)
         layer.setCustomProperty('kigam/encoding_reason', reason)
-        self._log(f'{layer_name}: {encoding} ({reason})')
+        self._log(f'{layer_name}: {encoding} ({reason})', warning=reason.startswith(TRUNCATED_UTF8_REASON))
         return layer, encoding, None, 0, 0
 
     def _build_relinked_qml(self, qml_path, raw_sym_files, normalized_sym_files):
@@ -443,7 +445,8 @@ class ZipProcessor:
             return qml_path, 0, 0
 
         if relinked_count != total_image_props:
-            self._log(f'QML images unresolved: {qml_path} ({relinked_count}/{total_image_props}); replacing missing images only', True)
+            self._log(f'QML images unresolved: {qml_path} ({relinked_count}/{total_image_props}); '
+                      'replacing missing images only', True)
 
         with tempfile.NamedTemporaryFile(mode='wb', prefix='.kigam-style-', suffix='.qml',
                                          dir=Path(qml_path).parent, delete=False) as fp:
@@ -472,9 +475,11 @@ class ZipProcessor:
                     count += 1
             return count
 
-        count = sum(repair(symbol) for symbol in layer.renderer().symbols(QgsRenderContext())) if layer.renderer() else 0
+        renderer = layer.renderer()
+        count = sum(repair(symbol) for symbol in renderer.symbols(QgsRenderContext())) if renderer else 0
         if count:
-            self._log(f'{layer.name()}: {count} missing/unreadable raster symbol(s) replaced; other QML styles preserved', True)
+            self._log(f'{layer.name()}: {count} missing/unreadable raster symbol(s) replaced; '
+                      'other QML styles preserved', True)
         return count
 
     @staticmethod
@@ -593,7 +598,9 @@ class ZipProcessor:
                 self.apply_sym_styling(layer, sym_path, str(qml) if qml else None)
                 pattern_report = scale_patterns(layer, pattern_scale)
                 if pattern_report['skipped']:
-                    self._log(f'{shp.name}: {pattern_report["skipped"]} pattern(s) need manual size/data-defined review', True)
+                    self._log(f'{shp.name}: {pattern_report["skipped"]} pattern(s) need '
+                              'manual size/data-defined review',
+                              True)
                 if LITHO_LAYER_KEYWORD in shp.stem.lower() and not layer.labelsEnabled():
                     self.apply_labeling(layer, font_family, font_size)
             except Exception as exc:
@@ -661,7 +668,8 @@ class ZipProcessor:
             return
 
         QgsMessageLog.logMessage(
-            f"Applying style to {layer.name()} using field '{best_field}' ({max_matches} matches)", "KIGAM Plugin", Qgis.MessageLevel.Success)
+            f"Applying style to {layer.name()} using field '{best_field}' ({max_matches} matches)",
+            "KIGAM Plugin", Qgis.MessageLevel.Success)
 
         # 2. Create Categories
         categories = []
@@ -728,7 +736,8 @@ class ZipProcessor:
                 preview = ", ".join(missing_values[:8])
                 if len(missing_values) > 8:
                     preview += ", ..."
-                self._log(f'{layer.name()}: {len(missing_values)} value(s) had no matching PNG in sym ({preview})', True)
+                self._log(f'{layer.name()}: {len(missing_values)} value(s) had no matching PNG in sym ({preview})',
+                          True)
 
     def apply_labeling(self, layer, font_family, font_size):
         from qgis.core import (
